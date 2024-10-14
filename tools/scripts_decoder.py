@@ -54,7 +54,7 @@ c_dict = {
     "EnterProgMode" : [],
     "EnterProgModeHvSp" : [],       # High Voltage Pulse on UPDI line
     "EnterProgModeHvSpRst" : [],    # High Voltage Pulse on Reset Pin
-    "EnterProgModeHvUpt" : [],
+    "EnterProgModeHvUpt" : [],      # User Power Toggle
     "ExitProgMode" : [],
     "SetSpeed" : [],
     "GetDeviceID" : [],
@@ -68,16 +68,18 @@ c_dict = {
     "WriteMem8" : [],
     "ReadMem8" : [],
     "WriteConfigmem" : [],
+    "WriteConfigmemFuse" : [],
+    "WriteConfigmemLock" : [],
     "ReadConfigmem" : [],
+    "ReadConfigmemFuse" : [],
+    "ReadConfigmemLock" : [],
     "WriteIDmem" : [],
     "ReadIDmem" : [],
     "ReadSIB" : [],
 }
 
-# List of MCUs that should not end up in the lookup-table,
-# preferably only those that are known not be released in the future
-mcu_blacklist = [
-    "AVR16DV14", "AVR16DV20"
+# List of MCUs that are supported by avrdude, extracted from the .conf file
+mcu_list = [
 ]
 
 # A complete list of Functions defined in the scripts.xml
@@ -332,6 +334,7 @@ struct avr_script_lut {
 typedef struct avr_script_lut SCRIPT;
 const unsigned char * get_devid_script_by_nvm_ver(unsigned char version);
 int get_pickit_updi_script(SCRIPT *scr, const char *partdesc);
+int get_pickit_isp_script(SCRIPT *scr, const char *partdesc);
 
 #ifdef __cplusplus
 }
@@ -456,7 +459,10 @@ def convert_xml(xml_path, c_dict):
         print("No Path to XML file provided")
         return
     
-    mcu_dict = dict()
+    mcu_updi_dict = dict()
+    updi_dict = dict()
+    mcu_isp_dict = dict
+    isp_dict = dict()
 
     # Prepare directories
     parent_dir = os.getcwd()
@@ -473,52 +479,69 @@ def convert_xml(xml_path, c_dict):
 
     # scan scripts file
     for script in origin_root.findall('script'):
-        function_name = script[0].text              # the function name is always on the first place
-        if (function_name.endswith("UPDI")):        # We're only intrested in UPDI functions
-            function_name = function_name[0:-5]     # remove "_UPDI" from function name
-            if (function_name in c_dict):           # filter out unneded functions
-                chip_name = script[1].text          # get chip name
-                if (chip_name in mcu_blacklist):    # filter out chips in blacklist
-                    continue
-                if (chip_name not in mcu_dict):
-                    mcu_dict[chip_name] = dict()
-                if (function_name not in mcu_dict[chip_name]):
-                    mcu_dict[chip_name][function_name] = []
-                scrbytes = script[3]
-                for bytes in scrbytes:
-                    mcu_dict[chip_name][function_name].append(int(bytes.text, 16))
-    # the mcu dict has following layout "mcu_name" : "function1" : [], "function2" : []
-    print("XML File processed")
+        function = script[0].text                   # the function name is always on the first place
+        chip_name = script[1].text                  # get chip name
+        if (chip_name not in mcu_list):             # only do chips avrdude knows
+            function_name, programming_mode = function.split('_')
+            if (function_name in c_dict):               # filter out unneded functions
+                if (programming_mode is "UPDI"):            # Do UPDI Functions
+                    if function_name not in updi_dict:          # Check if the function exists
+                        updi_dict[function_name] = []           # if not, create a new array
+                    
+                    scrbytes = script[3]                        # extract the bytes into a binary array
+                    scrbytes_len = len(script[3])
+                    func_bytes = bytearray(scrbytes_len)
+                    
+                    for x in range(scrbytes_len):
+                        func_bytes[x] = int(scrbytes[x].text, 16)
+                    
+                    func_array = updi_dict[function_name]
 
-    # reorder mcu_dict to a func_dict
-    func_dict = dict()
-    for mcu_name in mcu_dict:                                   # Go through every MCU
-        for function_name in mcu_dict[mcu_name]:                # Go through every Function for every CPU
-            if (function_name not in func_dict):
-                func_dict[function_name] = []
-            
-            funct_bytes = mcu_dict[mcu_name][function_name]     # get Function bytes
-            entries = len(func_dict[function_name])
-            for x in range (entries + 1):                       # try to find an existing entry
-                if x == entries:                                # if we reached the end
-                    func_dict[function_name].append(funct_bytes)   # add an entry to our dict
-                    mcu_dict[mcu_name][function_name] = x       # remember the postion in dict
-                    break
-                if func_dict[function_name][x] == funct_bytes:  # if match found
-                    mcu_dict[mcu_name][function_name] = x       # remember the postion
-                    break
-    # the funct dict has following layout: "function1" : [[], []], "function2" : [[], []],
-    # the mcu dict has following layout "mcu_name" : "function1" : 1, "function2" : 0
+                    found = False                               # compare the new data to the existing data,
+                    func_array_len = func_array                 # try to link it, or create a new entry
+                    for x in range(func_array_len):
+                        if func_array[x] is func_bytes:
+                            mcu_updi_dict[function_name] = x
+                            found = True
+                    if found == False:
+                        func_array.append(func_bytes)
+                        mcu_updi_dict[function_name] = func_array_len
+        
+                if (programming_mode is ("ISP")):        # Do ISP Functions
+                    if function_name not in isp_dict:          # Check if the function exists
+                        isp_dict[function_name] = []           # if not, create a new array
+                    
+                    scrbytes = script[3]                        # extract the bytes into a binary array
+                    scrbytes_len = len(script[3])
+                    func_bytes = bytearray(scrbytes_len)
+                    
+                    for x in range(scrbytes_len):
+                        func_bytes[x] = int(scrbytes[x].text, 16)
+                    
+                    func_array = updi_dict[function_name]
+
+                    found = False                               # compare the new data to the existing data,
+                    func_array_len = func_array                 # try to link it, or create a new entry
+                    for x in range(func_array_len):
+                        if func_array[x] is func_bytes:
+                            mcu_isp_dict[function_name] = x
+                            found = True
+                    if found == False:
+                        func_array.append(func_bytes)
+                        mcu_isp_dict[function_name] = func_array_len
+    # the funct dicts has following layout: "function1" : [[], []], "function2" : [[], []],
+    # the mcu dicts has following layout "mcu_name" : "function1" : 1, "function2" : 0
+    print("XML File processed")
  
-    # create h-File
+    # create h-File (make sure to provide all function definitions)
     generate_h_file(c_dict, src_dir)
 
     # create c-File
     global common_header
-    c_lut_path = os.path.join(src_dir, "pickit5_updi_lut.c")
-    if (os.path.exists(c_lut_path)):
-        os.remove(c_lut_path)
-    with open(c_lut_path, 'w') as c_file:
+    c_updi_lut_path = os.path.join(src_dir, "pickit5_updi_lut.c")
+    if (os.path.exists(c_updi_lut_path)):
+        os.remove(c_updi_lut_path)
+    with open(c_updi_lut_path, 'w') as c_file:
         non_unique_func = []
         c_file.write(common_header)
         c_file.write("#include <ac_cfg.h>\n")
@@ -600,8 +623,8 @@ def convert_xml(xml_path, c_dict):
         case_str_list = []
         break_str_list = []
         for chip_name in mcu_dict:
-            case_str_list.append("")
-            break_str_list.append("")
+            case_str_list.append("")    # case xx: /* MCU */
+            break_str_list.append("")   # contains the pointer assignments
             case_str_list[switch_iterator] = "    case {0}:  /* {1} */\n".format(switch_iterator, chip_name)
             chip_func = mcu_dict[chip_name]
             for func_lut in chip_func:
@@ -628,6 +651,114 @@ def convert_xml(xml_path, c_dict):
         c_file.write("  }\n  return 0;\n}")
     print("c-File generated")
     pass
+
+def get_c_header() -> str:
+    global common_header
+    ret_val = common_header
+    ret_val += "#include <ac_cfg.h>\n"
+    ret_val += "#include <stddef.h>\n"
+    ret_val += "#include <string.h>\n"
+    ret_val += "#include \"pickit5_lut.h\"\n\n\n"
+    return ret_val
+
+def get_c_array_init(func_dict) -> tuple[str, bytes]:
+    ret_val = ""
+    non_unique_func = []
+    struct_init_func = ""
+    struct_init_len = ""
+    for func_name in func_dict:                             # for each function in our database
+        function = func_dict[func_name]                     # load data associated with the function
+        array_iterator = 0
+        for array in function:                              # for each array in function
+            array_str  = "const unsigned char {0}_{1}[{2}]".format(func_name, array_iterator, len(array))
+            array_str += " = {"                             # begin array
+            for i in range (len(array)):                    # go through every byte
+                if (i % 16 == 0):
+                    array_str += "\n  "                     # new line after 16 bytes
+                array_str += "0x{0:02x}, ".format(array[i]) # and generate String
+            array_str += "\n};\n\n"                         # complete array
+            array_iterator += 1
+            ret_val += array_str
+
+        if array_iterator == 1:
+            struct_init_func += "  scr->{0} = {0}_0;\n".format(func_name)
+            struct_init_len  += "  scr->{0}_len = sizeof({0}_0);\n".format(func_name)
+        else:
+            struct_init_func += "  scr->{0} = NULL;\n".format(func_name)
+            struct_init_len  += "  scr->{0}_len = 0;\n".format(func_name)
+            non_unique_func.append(func_name)
+
+
+    ret_val += "\n\n\nstatic void pickit_updi_script_init(SCRIPT *scr);\n"   # declaration
+    ret_val += "static void pickit_updi_script_init(SCRIPT *scr) {\n"        # definition
+    ret_val += struct_init_func
+    ret_val += "\n"              # improve readability
+    ret_val += struct_init_len
+    ret_val += "}\n\n\n"
+    return ret_val, non_unique_func
+
+def get_mcu_list(mcu_dict:dict, prog_name:str) -> tuple[str, int]:
+    chip_lut_str = "const char * const pickit5_{0}_chip_lut[] = {\n  ".format(prog_name.lower())
+    chip_name_iterator = 0
+    for chip_name in mcu_dict:
+        chip_lut_str += "\""
+        chip_lut_str += chip_name
+        chip_lut_str += "\", "
+        chip_name_iterator += 1
+        if chip_name_iterator % 8 == 0:
+            chip_lut_str += "\n  "
+    chip_lut_str += "\n};\n\n\n"
+    return chip_lut_str, chip_name_iterator
+
+def get_func_header(mcu_num:int, prog_name:str) -> str:
+    c_func_str = "int get_pickit_{0}_script(SCRIPT *scr, const char* partdesc) { \n.".format(prog_name.lower())
+    c_func_str += "  if ((scr == NULL) || (partdesc == NULL))\n    return -1;\n\n"
+    c_func_str += "  int namepos = -1;\n"
+    c_func_str += "  for (int i = 0; i < {0}; i++)".format(mcu_num)
+    c_func_str += " {\n"
+    c_func_str += "    if (strncmp(pickit5_updi_chip_lut[i], partdesc, 10) == 0) {\n"
+    c_func_str += "      namepos = i;\n      break;\n    }\n  }\n"
+    c_func_str += "  if (namepos == -1) {\n    return -2;\n  }\n\n"
+    c_func_str += "  pickit_updi_script_init(scr);   // load common functions\n\n"
+    return c_func_str
+
+
+def generate_c_updi_lut(src_dir, mcu_dict, func_dict):
+    if (src_dir is None) or (mcu_dict is None) or (func_dict is None):
+        raise ValueError()
+    c_lut_path = os.path.join(src_dir, "pickit5_updi_lut.c")
+    if (os.path.exists(c_lut_path)):
+        os.remove(c_lut_path)
+    with open(c_lut_path, 'w') as c_file:
+        c_file.write(get_c_header)
+        func_str, non_unique_func = get_c_array_init(func_dict)
+        c_file.write(func_str)
+        mcu_str, mcu_num = get_mcu_list(mcu_dict, "updi")
+        c_file.write(mcu_str)
+        c_file.write(get_func_header(mcu_num, "updi"))
+
+        devid_str = "const unsigned char * get_devid_script_by_nvm_ver(unsigned char version) {\n"
+        devid_str += "  if (version >= '0') version -= '0'; // allow chars\n"
+        devid_str += "  if (version > 9) return NULL;       // Not a valid number\n"
+        devid_str += "  if (version <= 3)                   // tiny, mega, DA, DB, DD, EA\n"
+        devid_str += "    return GetDeviceID_0;\n"
+        devid_str += "  else                                // DU, EB\n"
+        devid_str += "    return GetDeviceID_1;\n}\n\n"
+        c_file.write(devid_str)
+
+def generate_c_isp_lut(src_dir, mcu_dict, func_dict):
+    if (src_dir is None) or (mcu_dict is None) or (func_dict is None):
+        raise ValueError()
+    c_lut_path = os.path.join(src_dir, "pickit5_isp_lut.c")
+    if (os.path.exists(c_lut_path)):
+        os.remove(c_lut_path)
+    with open(c_lut_path, 'w') as c_file:
+        c_file.write(get_c_header)
+        func_str, non_unique_func = get_c_array_init(func_dict)
+        c_file.write(func_str)
+        mcu_str, mcu_num = get_mcu_list(mcu_dict, "isp")
+        c_file.write(mcu_str)
+        c_file.write(get_func_header(mcu_num, "isp"))
 
 
 
