@@ -3076,9 +3076,25 @@ programmer # pickit4_tpi
 #      enabled through the '-x hvupdi' flag.
 
 #------------------------------------------------------------
-# pickit5 /pickit5_updi
+# pickit5 /pickit5_jtag
 #------------------------------------------------------------
 
+programmer # pickit5_jtag
+    id                     = "pickit5_jtag";
+    desc                   = "MPLAB(R) PICkit 5, PICkit 4 and SNAP (PIC)";
+    type                   = "pickit5_jtag";
+    prog_modes             = PM_JTAG;
+    extra_features         = HAS_VTARG_READ;
+    connection_type        = usb;
+    baudrate               = 200000;   # JTAG default clock
+    usbvid                 = 0x04d8;
+    usbpid                 = 0x9036, 0x9012, 0x9018; # PK5, PK4 (pic mode), snap (pic mode)
+;
+
+
+#------------------------------------------------------------
+# pickit5_updi
+#------------------------------------------------------------
 programmer # pickit5_updi
     id                     = "pickit5_updi";
     desc                   = "MPLAB(R) PICkit 5, PICkit 4 and SNAP (PIC)";
@@ -3090,6 +3106,21 @@ programmer # pickit5_updi
     usbvid                 = 0x04d8;
     usbpid                 = 0x9036, 0x9012, 0x9018; # PK5, PK4 (pic mode), snap (pic mode)
     hvupdi_support         = 0, 1, 2;
+;
+
+#------------------------------------------------------------
+# pickit5_isp
+#------------------------------------------------------------
+programmer # pickit5_updi
+    id                     = "pickit5_isp";
+    desc                   = "MPLAB(R) PICkit 5, PICkit 4 and SNAP (PIC)";
+    type                   = "pickit5_isp";
+    prog_modes             = PM_ISP;
+    extra_features         = HAS_VTARG_READ;
+    connection_type        = usb;
+    baudrate               = 200000;   # ISP default clock
+    usbvid                 = 0x04d8;
+    usbpid                 = 0x9036, 0x9012, 0x9018; # PK5, PK4 (pic mode), snap (pic mode)
 ;
 
 #------------------------------------------------------------
