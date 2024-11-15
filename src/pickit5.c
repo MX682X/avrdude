@@ -135,9 +135,10 @@ static int pickit5_write_array(const PROGRAMMER *pgm, const AVRPART *p,
   const AVRMEM *mem, unsigned long addr, int len, unsigned char *value);
 
 static int pickit5_upload_data(const PROGRAMMER *pgm, const unsigned char *scr, unsigned int scr_len,
-  const unsigned char *param, unsigned int param_len, const unsigned char *recv_buf, unsigned int recv_len);
+  const unsigned char *param, unsigned int param_len, unsigned char *recv_buf, unsigned int recv_len);
 
 // UPDI-specific functions
+static int pickit5_updi_init(const PROGRAMMER *pgm, const AVRPART *p, double v_target);
 static int pickit5_updi_write_byte(const PROGRAMMER *pgm, const AVRPART *p,
   const AVRMEM *mem, unsigned long addr, unsigned char value);
 static int pickit5_updi_read_byte(const PROGRAMMER *pgm, const AVRPART *p,
@@ -147,6 +148,7 @@ static int pickit5_updi_write_cs_reg(const PROGRAMMER *pgm, unsigned int addr, u
 static int pickit5_updi_read_cs_reg(const PROGRAMMER *pgm, unsigned int addr, unsigned char *value);
 
 // ISP-specific
+static int pickit5_isp_init(const PROGRAMMER *pgm, const AVRPART *p);
 static int pickit5_isp_read_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char *value);
 static int pickit5_isp_write_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char *value);
 
@@ -499,6 +501,91 @@ static void pickit5_print_parms(const PROGRAMMER *pgm, FILE *fp) {
   fmsg_out(fp, "Target current        : %3u mA\n", my.measured_current);
 }
 
+static int pickit5_updi_init(const PROGRAMMER *pgm, const AVRPART *p, double v_target) {
+  // Get SIB so we can get the NVM Version
+  if(pickit5_updi_read_sib(pgm, p, my.sib_string) < 0) {
+      pmsg_error("failed to obtain System Info Block\n");
+      return -1;
+  }
+  
+
+  if(pickit5_read_dev_id(pgm, p) < 0) {
+    pmsg_error("failed to obtain device ID\n");
+    return -1;
+  }
+
+  double bitclock = pgm->bitclock;
+  unsigned int baud = pgm->baudrate;
+
+  if(baud == 200000) {          // If baud unchanged
+    if(bitclock > 0.0) {
+      baud = (unsigned int) (1.0 / pgm->bitclock); // Bitclock in us
+    }
+  } else {
+    if(bitclock > 0.0) {
+      pmsg_error("both -b baudrate and -B bitclock given; please use only one, aborting\n");
+      return -1;
+    }
+  }
+
+  if(baud < 300) {              // Better be safe than sorry
+    pmsg_warning("UPDI needs a higher clock for operation, increasing UPDI to 300 Hz\n");
+    baud = 300;
+  }
+  if(baud > 225000) {
+    if(v_target < 2.9) {
+      pmsg_warning("UPDI needs a voltage of more than 2.9 V for a faster baudrate, limiting UPDI to 225 kHz\n");
+      baud = 225000;
+    } else {
+      if(baud > 900000) {
+        pmsg_warning("requested clock %u Hz too high, limiting UPDI to 900 kHz\n", baud);
+        baud = 900000;
+      }
+      pickit5_set_sck_period(pgm, 1.0 / 100000);       // Start with 200 kHz
+      pickit5_updi_write_cs_reg(pgm, UPDI_ASI_CTRLA, 0x01); // Change UPDI clock to 16 MHz
+      unsigned char ret_val = 0;
+
+      pickit5_updi_read_cs_reg(pgm, UPDI_ASI_CTRLA, &ret_val);
+      if(ret_val != 0x01) {
+        pmsg_warning("failed to change UPDI clock, falling back to 225 kHz\n");
+        baud = 225000;
+      }
+    }
+  }
+  if(pickit5_set_sck_period(pgm, 1.0 / baud) >= 0) {
+    pmsg_notice("UPDI speed set to %i kHz\n", baud / 1000);
+    my.actual_updi_clk = baud;
+  } else {
+    pmsg_warning("failed to set UPDI speed, continuing\n");
+    my.actual_updi_clk = 100000;       // Default clock?
+  }
+  return 1;
+}
+
+static int pickit5_isp_init(const PROGRAMMER *pgm, const AVRPART *p) {
+  double bitclock = pgm->bitclock;
+  unsigned int baud = pgm->baudrate;
+
+  if(baud == 125000) {          // If baud unchanged
+    if(bitclock > 0.0) {
+      baud = (unsigned int) (1.0 / pgm->bitclock); // Bitclock in us
+    }
+  } else {
+    if(bitclock > 0.0) {
+      pmsg_error("both -b baudrate and -B bitclock given; please use only one, aborting\n");
+      return -1;
+    }
+  }
+
+  if(pickit5_read_dev_id(pgm, p) < 0) {
+    pmsg_error("failed to obtain device ID\n");
+    return -1;
+  }
+  pickit5_set_sck_period(pgm, 1.0 / baud);
+  return 1;
+}
+
+
 static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
   pmsg_debug("%s()\n", __func__);
   if(!pgm->cookie)
@@ -584,63 +671,10 @@ static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
   if(pickit5_program_enable(pgm, p) < 0)
     return -1;
 
-  // Get SIB so we can get the NVM Version
-  if(pgm->prog_modes == PM_UPDI) {
-    if(pickit5_updi_read_sib(pgm, p, my.sib_string) < 0) {
-      pmsg_error("failed to obtain System Info Block\n");
-      return -1;
-    }
-  }
-
-  if(pickit5_read_dev_id(pgm, p) < 0) {
-    pmsg_error("failed to obtain device ID\n");
+  if(is_updi(pgm) && (pickit5_updi_init(pgm, p, v_target) < 0)) {
     return -1;
-  }
-
-  double bitclock = pgm->bitclock;
-  unsigned int baud = pgm->baudrate;
-
-  if(baud == 200000) {          // If baud unchanged
-    if(bitclock > 0.0) {
-      baud = (unsigned int) (1.0 / pgm->bitclock); // Bitclock in us
-    }
-  } else {
-    if(bitclock > 0.0) {
-      pmsg_error("both -b baudrate and -B bitclock given; please use only one, aborting\n");
-      return -1;
-    }
-  }
-
-  if(baud < 300) {              // Better be safe than sorry
-    pmsg_warning("UPDI needs a higher clock for operation, increasing UPDI to 300 Hz\n");
-    baud = 300;
-  }
-  if(baud > 225000) {
-    if(v_target < 2.9) {
-      pmsg_warning("UPDI needs a voltage of more than 2.9 V for a faster baudrate, limiting UPDI to 225 kHz\n");
-      baud = 225000;
-    } else {
-      if(baud > 900000) {
-        pmsg_warning("requested clock %u Hz too high, limiting UPDI to 900 kHz\n", baud);
-        baud = 900000;
-      }
-      pickit5_set_sck_period(pgm, 1.0 / 100000);       // Start with 200 kHz
-      pickit5_updi_write_cs_reg(pgm, UPDI_ASI_CTRLA, 0x01); // Change UPDI clock to 16 MHz
-      unsigned char ret_val = 0;
-
-      pickit5_updi_read_cs_reg(pgm, UPDI_ASI_CTRLA, &ret_val);
-      if(ret_val != 0x01) {
-        pmsg_warning("failed to change UPDI clock, falling back to 225 kHz\n");
-        baud = 225000;
-      }
-    }
-  }
-  if(pickit5_set_sck_period(pgm, 1.0 / baud) >= 0) {
-    pmsg_notice("UPDI speed set to %i kHz\n", baud / 1000);
-    my.actual_updi_clk = baud;
-  } else {
-    pmsg_warning("failed to set UPDI speed, continuing\n");
-    my.actual_updi_clk = 100000;       // Default clock?
+  } else if(is_isp(pgm) && (pickit5_isp_init(pgm, p) < 0)) {
+    return -1;
   }
 
   pickit5_program_enable(pgm, p);
@@ -860,17 +894,6 @@ static int pickit5_updi_read_byte(const PROGRAMMER *pgm, const AVRPART *p,
     if(rc < 0)
       return rc;
     return 0;
-  }
-}
-
-// Workaround to handle l/h/e fuse on ISP, the address has to be adjusted
-static void adjust_fuse_addr(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned long *addr) {
-  if(is_isp(pgm)) {
-    if (mem_is_hfuse(mem)) {
-      *addr += 1;
-    } else if (mem_is_efuse(mem)){
-      *addr += 2;
-    }
   }
 }
 
@@ -1238,7 +1261,7 @@ static int pickit5_send_script_cmd(const PROGRAMMER *pgm, const unsigned char *s
 
 
 static int pickit5_upload_data(const PROGRAMMER *pgm, const unsigned char *scr, unsigned int scr_len,
-  const unsigned char *param, unsigned int param_len, const unsigned char *recv_buf, unsigned int recv_len) {
+  const unsigned char *param, unsigned int param_len, unsigned char *recv_buf, unsigned int recv_len) {
 
   if(pickit5_send_script(pgm, SCR_UPLOAD, scr, scr_len, param, param_len, recv_len) < 0) {
     pmsg_error("sending script failed\n");
