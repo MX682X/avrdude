@@ -134,6 +134,9 @@ static int pickit5_read_array(const PROGRAMMER *pgm, const AVRPART *p,
 static int pickit5_write_array(const PROGRAMMER *pgm, const AVRPART *p,
   const AVRMEM *mem, unsigned long addr, int len, unsigned char *value);
 
+static int pickit5_upload_data(const PROGRAMMER *pgm, const unsigned char *scr, unsigned int scr_len,
+  const unsigned char *param, unsigned int param_len, const unsigned char *recv_buf, unsigned int recv_len);
+
 // UPDI-specific functions
 static int pickit5_updi_write_byte(const PROGRAMMER *pgm, const AVRPART *p,
   const AVRMEM *mem, unsigned long addr, unsigned char value);
@@ -142,6 +145,11 @@ static int pickit5_updi_read_byte(const PROGRAMMER *pgm, const AVRPART *p,
 static int pickit5_updi_read_sib(const PROGRAMMER *pgm, const AVRPART *p, char *sib);
 static int pickit5_updi_write_cs_reg(const PROGRAMMER *pgm, unsigned int addr, unsigned char value);
 static int pickit5_updi_read_cs_reg(const PROGRAMMER *pgm, unsigned int addr, unsigned char *value);
+
+// ISP-specific
+static int pickit5_isp_read_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char *value);
+static int pickit5_isp_write_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char *value);
+
 
 // Extra functions
 static int pickit5_get_fw_info(const PROGRAMMER *pgm);
@@ -165,6 +173,9 @@ static int pickit5_send_script(const PROGRAMMER *pgm, unsigned int script_type,
   const unsigned char *param, unsigned int param_len, unsigned int payload_len);
 static int pickit5_send_script_done(const PROGRAMMER *pgm);
 static int pickit5_read_response(const PROGRAMMER *pgm);
+static int pickit5_send_script_cmd(const PROGRAMMER *pgm, const unsigned char *scr, unsigned int scr_len,
+  const unsigned char *param, unsigned int param_len);
+
 
 // Extra-USB related functions, because we need more then 2 endpoints
 static int usbdev_data_recv(const union filedescriptor *fd, unsigned char *buf, size_t nbytes);
@@ -575,7 +586,7 @@ static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
 
   // Get SIB so we can get the NVM Version
   if(pgm->prog_modes == PM_UPDI) {
-    if(pickit5_read_sib(pgm, p, my.sib_string) < 0) {
+    if(pickit5_updi_read_sib(pgm, p, my.sib_string) < 0) {
       pmsg_error("failed to obtain System Info Block\n");
       return -1;
     }
@@ -614,10 +625,10 @@ static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
         baud = 900000;
       }
       pickit5_set_sck_period(pgm, 1.0 / 100000);       // Start with 200 kHz
-      pickit5_write_cs_reg(pgm, UPDI_ASI_CTRLA, 0x01); // Change UPDI clock to 16 MHz
+      pickit5_updi_write_cs_reg(pgm, UPDI_ASI_CTRLA, 0x01); // Change UPDI clock to 16 MHz
       unsigned char ret_val = 0;
 
-      pickit5_read_cs_reg(pgm, UPDI_ASI_CTRLA, &ret_val);
+      pickit5_updi_read_cs_reg(pgm, UPDI_ASI_CTRLA, &ret_val);
       if(ret_val != 0x01) {
         pmsg_warning("failed to change UPDI clock, falling back to 225 kHz\n");
         baud = 225000;
@@ -854,7 +865,7 @@ static int pickit5_updi_read_byte(const PROGRAMMER *pgm, const AVRPART *p,
 
 // Workaround to handle l/h/e fuse on ISP, the address has to be adjusted
 static void adjust_fuse_addr(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned long *addr) {
-  if(pgm->prog_modes == PM_ISP) {
+  if(is_isp(pgm)) {
     if (mem_is_hfuse(mem)) {
       *addr += 1;
     } else if (mem_is_efuse(mem)){
@@ -891,6 +902,9 @@ static int pickit5_write_array(const PROGRAMMER *pgm, const AVRPART *p,
     write_bytes     = my.scripts.WriteDataEEmem;
     write_bytes_len = my.scripts.WriteDataEEmem_len;
   } else if(mem_is_in_fuses(mem) && my.scripts.WriteConfigmemFuse != NULL) {
+    if(is_isp(pgm)) {
+      return pickit5_isp_write_fuse(pgm, mem, value);
+    }
     write_bytes     = my.scripts.WriteConfigmemFuse;
     write_bytes_len = my.scripts.WriteConfigmemFuse_len;
   } else if (mem_is_lock(mem) && my.scripts.WriteConfigmemLock != NULL) {
@@ -1136,7 +1150,7 @@ static int pickit5_updi_read_cs_reg(const PROGRAMMER *pgm, unsigned int addr, un
   unsigned char buf[1];
 
   buf[0] = addr;
-  unsigned int ret_val = pickit5_upload_data(pgm, read_cs, read_cs_len, buf, 1, value, 1);
+  int ret_val = pickit5_upload_data(pgm, read_cs, read_cs_len, buf, 1, value, 1);
 
   if(ret_val == -1) {
     pmsg_error("sending script failed\n");
@@ -1155,24 +1169,57 @@ static int pickit5_updi_read_cs_reg(const PROGRAMMER *pgm, unsigned int addr, un
 }
 
 
-// As AVRDUDE is only reading/writing one fuse at a time, length is not needed
 static int pickit5_isp_read_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char *value) {
-  // Workaround for ISP: Must read all 3 fuse bytes at once
-  const unsigned char *read_fuses      = my.scripts.ReadConfigmemFuse;
-  unsigned int read_fuses_len  = my.scripts.ReadConfigmemFuse_len;
-  if(pickit5_upload_data(pgm, read_fuses, read_fuses_len, )
+  // Original Script only supports doing all three at once,
+  // doing a custom script felt easier to integrate into avrdude,
+  // especially as we already have all the programming commands
+  unsigned char read_fuse_isp [] = {
+    0x90, 0x00, 0x32, 0x00, 0x00, 0x00, // load 0x32 to r00
+    0x1E, 0x37, 0x00,                   // Enable Programming?
+    0x90, 0x01, 0x00, 0x00, 0x00, 0x00, // load programming command to r01 (set later)
+    0x9B, 0x02, 0x03,                   // load 0x03 to r02
+    0x9B, 0x03, 0x00,                   // load 0x00 to r03
+    0x1E, 0x35, 0x01, 0x02, 0x03,       // Execute Command placed in r01
+    0x9F                                // Send data from temp_reg to host
+  };
+  unsigned int read_fuse_isp_len = sizeof(read_fuse_isp);
+  unsigned int cmd;
+  avr_set_bits(mem->op[AVR_OP_READ], (unsigned char*)&cmd);
+  avr_set_addr(mem->op[AVR_OP_READ], (unsigned char*)&cmd, mem_fuse_offset(mem));
+  cmd = __builtin_bswap32(cmd); // Swap bitorder
+  pickit5_uint32_to_array(&read_fuse_isp[11], cmd); // fill programming command
 
-    if(usbdev_data_recv(&pgm->fd, val_fuse, len) < 0) {
-      pmsg_error("reading data memory failed\n");
-      return -1;
-    }
-    unsigned char offset = mem_fuse_offset(mem);
-    if (offset > 2) offset = 2; // avoid access outside of array
-    *value = val_fuse[offset];
+  if(pickit5_send_script_cmd(pgm, read_fuse_isp, read_fuse_isp_len, NULL, 0) < 0) {
+    pmsg_error("Read Fuse Script failed");
+    return -1;
+  }
+  if (0x01 != my.rxBuf[20]) { // length
+    return -1;
+  }
+  *value = my.rxBuf[24];      // return value
+  return 1;
 }
 
 static int pickit5_isp_write_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char *value) {
-  
+  unsigned char write_fuse_isp [] = {
+    0x90, 0x00, 0x32, 0x00, 0x00, 0x00, // load 0x32 to r00
+    0x1E, 0x37, 0x00,                   // Enable Programming?
+    0x90, 0x01, 0x00, 0x00, 0x00, 0x00, // load programming command to r01 (set later)
+    0x1E, 0x34, 0x01,                   // Execute write command placed in r01
+  };
+  unsigned int write_fuse_isp_len = sizeof(write_fuse_isp);
+  unsigned int cmd;
+  avr_set_bits(mem->op[AVR_OP_WRITE], (unsigned char*)&cmd);
+  avr_set_addr(mem->op[AVR_OP_WRITE], (unsigned char*)&cmd, mem_fuse_offset(mem));
+  avr_set_input(mem->op[AVR_OP_WRITE], (unsigned char*)&cmd, *value);
+  cmd = __builtin_bswap32(cmd);         // Swap bitorder
+  pickit5_uint32_to_array(&write_fuse_isp[11], cmd);  // fill programming command
+
+  if(pickit5_send_script_cmd(pgm, write_fuse_isp, write_fuse_isp_len, NULL, 0) < 0) {
+    pmsg_error("Write Fuse Script failed");
+    return -1;
+  }
+  return 1;
 }
 
 static int pickit5_send_script_cmd(const PROGRAMMER *pgm, const unsigned char *scr, unsigned int scr_len,
@@ -1191,8 +1238,7 @@ static int pickit5_send_script_cmd(const PROGRAMMER *pgm, const unsigned char *s
 
 
 static int pickit5_upload_data(const PROGRAMMER *pgm, const unsigned char *scr, unsigned int scr_len,
-                              const unsigned char *param, unsigned int param_len,
-                              const unsigned char *recv_buf, unsigned int recv_len) {
+  const unsigned char *param, unsigned int param_len, const unsigned char *recv_buf, unsigned int recv_len) {
 
   if(pickit5_send_script(pgm, SCR_UPLOAD, scr, scr_len, param, param_len, recv_len) < 0) {
     pmsg_error("sending script failed\n");
