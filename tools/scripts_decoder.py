@@ -220,8 +220,20 @@ def convert_xml(xml_path, c_funcs):
         print("No Path to XML file provided")
         return
 
-    program_iface = dict()
-    function_dict = dict()
+    program_iface = {
+        "UPDI": dict(),
+        "PDI": dict(), 
+        "dW": dict(), 
+        "ISP": dict(), 
+        "JTAG": dict()
+    }
+    function_dict = {
+        "UPDI": dict(),
+        "PDI": dict(), 
+        "dW": dict(), 
+        "ISP": dict(), 
+        "JTAG": dict()
+    }
 
     # Prepare directories
     parent_dir = os.getcwd()
@@ -291,10 +303,6 @@ def convert_xml(xml_path, c_funcs):
                 if func_bytes == None:
                     continue    # continue with next chip if somethin went wrong
 
-                if programming_mode not in function_dict.keys():
-                    function_dict[programming_mode] = dict()
-                    #print("Added " + programming_mode)
-
                 if function_name not in function_dict[programming_mode].keys():
                     function_dict[programming_mode][function_name] = []
 
@@ -305,13 +313,11 @@ def convert_xml(xml_path, c_funcs):
 
                 #function_dict = {
                 #  "UPDI": {
-                #    "EnterProgMode" : [bytes_0, bytes_1]}
+                #    "EnterProgMode" : [bytes_0, bytes_1]},
                 #    "SetSpeed"      : [bytes_2, bytes_3]}
                 #  }
                 #}
-    
-                if programming_mode not in program_iface:
-                    program_iface[programming_mode] = dict()
+
 
                 if chip_name not in program_iface[programming_mode]:
                     program_iface[programming_mode][chip_name] = [(function_name, index)]
