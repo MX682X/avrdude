@@ -825,8 +825,7 @@ const unsigned char ReadSIB_updi_0[7] = {
 
 
 static void pickit_updi_script_init(SCRIPT *scr);
-static void pickit_updi_script_init(SCRIPT *scr)
- {
+static void pickit_updi_script_init(SCRIPT *scr) {
   memset(scr, 0x00, sizeof(SCRIPT));  // Make sure everything is NULL
 
   scr->EnterProgMode = EnterProgMode_updi_0;

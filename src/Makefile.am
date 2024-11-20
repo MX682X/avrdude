@@ -160,6 +160,7 @@ libavrdude_la_SOURCES = \
     pickit5_lut_isp.c \
     pickit5_lut_jtag.c \
     pickit5_lut_pdi.c \
+	pickit5_lut_tpi.c \
     pickit5_lut_updi.c \
 	pickit5_lut.h \
 	pickit5.c \

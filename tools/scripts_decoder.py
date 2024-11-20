@@ -150,6 +150,7 @@ int get_pickit_isp_script(SCRIPT *scr, const char *partdesc);
 int get_pickit_jtag_script(SCRIPT *scr, const char *partdesc);
 int get_pickit_updi_script(SCRIPT *scr, const char *partdesc);
 int get_pickit_pdi_script(SCRIPT *scr, const char *partdesc);
+int get_pickit_tpi_script(SCRIPT *scr, const char *partdesc);
 
 #ifdef __cplusplus
 }
@@ -222,16 +223,18 @@ def convert_xml(xml_path, c_funcs):
 
     program_iface = {
         "UPDI": dict(),
-        "PDI": dict(), 
-        "dW": dict(), 
-        "ISP": dict(), 
+        "PDI": dict(),
+        "dW": dict(),
+        "ISP": dict(),
+        "TPI": dict(),
         "JTAG": dict()
     }
     function_dict = {
         "UPDI": dict(),
-        "PDI": dict(), 
-        "dW": dict(), 
-        "ISP": dict(), 
+        "PDI": dict(),
+        "dW": dict(),
+        "ISP": dict(),
+        "TPI": dict(),
         "JTAG": dict()
     }
 
@@ -280,7 +283,7 @@ def convert_xml(xml_path, c_funcs):
                 except:
                     continue    # If the function did not contain any '_', continue to next line
 
-                if programming_mode not in ["UPDI", "PDI", "dW", "ISP", "JTAG"]:
+                if programming_mode not in ["UPDI", "PDI", "dW", "ISP", "TPI", "JTAG"]:
                     continue    # Filters out "FPGA" and other edge cases
 
                 if function_name not in c_funcs:
@@ -383,7 +386,7 @@ def convert_xml(xml_path, c_funcs):
                     
             
             c_file.write("\n\n\nstatic void pickit_{0}_script_init(SCRIPT *scr);\n".format(lower_prog_iface))   # declaration
-            c_file.write("static void pickit_{0}_script_init(SCRIPT *scr)\n".format(lower_prog_iface) + " {\n")        # definition
+            c_file.write("static void pickit_{0}_script_init(SCRIPT *scr)".format(lower_prog_iface) + " {\n")        # definition
             c_file.write("  memset(scr, 0x00, sizeof(SCRIPT));  // Make sure everything is NULL\n\n")
             c_file.write(struct_init_func)
             c_file.write("\n")              # improve readability

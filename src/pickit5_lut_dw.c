@@ -4194,8 +4194,7 @@ const unsigned char WriteMemIO_dw_0[189] = {
 
 
 static void pickit_dw_script_init(SCRIPT *scr);
-static void pickit_dw_script_init(SCRIPT *scr)
- {
+static void pickit_dw_script_init(SCRIPT *scr) {
   memset(scr, 0x00, sizeof(SCRIPT));  // Make sure everything is NULL
 
   scr->EnterProgMode = EnterProgMode_dw_0;

@@ -1244,8 +1244,7 @@ const unsigned char ReadCSreg_jtag_0[6] = {
 
 
 static void pickit_jtag_script_init(SCRIPT *scr);
-static void pickit_jtag_script_init(SCRIPT *scr)
- {
+static void pickit_jtag_script_init(SCRIPT *scr) {
   memset(scr, 0x00, sizeof(SCRIPT));  // Make sure everything is NULL
 
   scr->ReadCalibrationByte = ReadCalibrationByte_jtag_0;

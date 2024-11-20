@@ -101,6 +101,7 @@ int get_pickit_isp_script(SCRIPT *scr, const char *partdesc);
 int get_pickit_jtag_script(SCRIPT *scr, const char *partdesc);
 int get_pickit_updi_script(SCRIPT *scr, const char *partdesc);
 int get_pickit_pdi_script(SCRIPT *scr, const char *partdesc);
+int get_pickit_tpi_script(SCRIPT *scr, const char *partdesc);
 
 #ifdef __cplusplus
 }

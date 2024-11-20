@@ -156,6 +156,12 @@ static int pickit5_dw_read_fuse(const PROGRAMMER *pgm, const AVRPART *p, const A
 static void pickit5_dw_switch_to_isp(const PROGRAMMER *pgm, const AVRPART *p);
 static void pickit5_isp_switch_to_dw(const PROGRAMMER *pgm, const AVRPART *p);
 
+// TPI-specific
+static int pickit5_tpi_read(const PROGRAMMER *pgm, const AVRPART *p,
+  const AVRMEM *mem, unsigned long addr, int len, unsigned char *value);
+static int pickit5_tpi_write(const PROGRAMMER *pgm, const AVRPART *p,
+  const AVRMEM *mem, unsigned long addr, int len, unsigned char *value);
+
 
 // Extra functions
 static int pickit5_get_fw_info(const PROGRAMMER *pgm);
@@ -623,18 +629,25 @@ static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
 
   int rc = -1;
 
-  if(pgm->prog_modes == PM_debugWIRE) {
-    rc = get_pickit_dw_script(&(my.scripts), p->desc);
-  } else if(pgm->prog_modes == PM_ISP) {
-    rc = get_pickit_isp_script(&(my.scripts), p->desc);
-  } else if(pgm->prog_modes == PM_JTAG) {
-    rc = get_pickit_jtag_script(&(my.scripts), p->desc);
-  } else if(pgm->prog_modes == PM_UPDI) {
-    rc = get_pickit_updi_script(&(my.scripts), p->desc);
-  } else if (pgm->prog_modes == PM_PDI) {
-    rc = get_pickit_pdi_script(&(my.scripts), p->desc);
-  } else {
-    rc = -1;
+  switch(pgm->prog_modes) {
+    case PM_debugWIRE:
+      rc = get_pickit_dw_script(&(my.scripts), p->desc);
+      break;
+    case PM_ISP:
+      rc = get_pickit_isp_script(&(my.scripts), p->desc);
+      break;
+    case PM_JTAG:
+      rc = get_pickit_jtag_script(&(my.scripts), p->desc);
+      break;
+    case PM_UPDI:
+      rc = get_pickit_updi_script(&(my.scripts), p->desc);
+      break;
+    case PM_TPI:
+      rc = get_pickit_tpi_script(&(my.scripts), p->desc);
+      break;
+    case PM_PDI:
+      rc = get_pickit_pdi_script(&(my.scripts), p->desc);
+      break;
   }
 
   if(rc == -1)
@@ -676,7 +689,7 @@ static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
       if(pickit5_get_vtarget(pgm, &v_target) < 0)
         return -1;              // Verify voltage
 
-      if(v_target < my.target_voltage - 0.4   // Voltage supply is not accurate: allow some room
+      if(v_target < my.target_voltage - 0.5   // Voltage supply is not accurate: allow some room
         || v_target > my.target_voltage + 0.15) {
         pmsg_error("target voltage out of range, aborting\n");
         return -1;
@@ -696,9 +709,7 @@ static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
 
   if(is_updi(pgm) && (pickit5_updi_init(pgm, p, v_target) < 0)) {
     return -1;
-  } else if(is_isp(pgm) && (pickit5_isp_init(pgm, p) < 0)) {
-    return -1;
-  } else if(is_debugwire(pgm) && (pickit5_isp_init(pgm, p) < 0)) {
+  } else if((pickit5_isp_init(pgm, p) < 0)) { // Ended up being used for ISP, dW and TPI
     return -1;
   }
 
@@ -964,6 +975,9 @@ static int pickit5_write_array(const PROGRAMMER *pgm, const AVRPART *p,
   if(is_debugwire(pgm) && !mem_is_in_flash(mem)) {  // for flash programming, stay in 
     pickit5_isp_switch_to_dw(pgm, p);
   }
+  if(is_tpi(pgm)) {
+    pickit5_tpi_write(pgm, p, mem, addr, len, value);
+  }
 
   const unsigned char *write_bytes = NULL;
   unsigned int write_bytes_len = 0;
@@ -1043,8 +1057,19 @@ static int pickit5_read_array(const PROGRAMMER *pgm, const AVRPART *p,
     return -1;
   }
 
+  if(mem_is_signature(mem)) { // DeviceID is read only once and buffered
+    if(len == 1) {
+      *value = my.devID[addr];
+      return 0;
+    }
+    return -1;
+  }
+
   if(is_debugwire(pgm)) {
     pickit5_isp_switch_to_dw(pgm, p);
+  }
+  if(is_tpi(pgm)) {
+    return pickit5_tpi_read(pgm, p, mem, addr, len, value);
   }
 
   const unsigned char *read_bytes = NULL;
@@ -1078,12 +1103,6 @@ static int pickit5_read_array(const PROGRAMMER *pgm, const AVRPART *p,
     } else if(len == 32) {
       memcpy(value, my.sib_string, 32);
       return 32;
-    }
-    return -1;
-  } else if(mem_is_signature(mem)) {
-    if(len == 1) {
-      *value = my.devID[addr];
-      return 0;
     }
     return -1;
   } else if((mem_is_in_sigrow(mem) || mem_is_user_type(mem) || mem_is_a_fuse(mem))
@@ -1371,6 +1390,75 @@ static void pickit5_isp_switch_to_dw(const PROGRAMMER *pgm, const AVRPART *p) {
     }
   }
 }
+
+
+// TPI has an unified memory space, meaning that any memory (even SRAM) 
+// can be accessed by the same command, meaning that we don't need the
+// decision tree found in the "read/write array" functions
+static int pickit5_tpi_write(const PROGRAMMER *pgm, const AVRPART *p,
+  const AVRMEM *mem, unsigned long addr, int len, unsigned char *value) {
+
+  const unsigned char* write_bytes = my.scripts.WriteProgmem;
+  unsigned int write_bytes_len = my.scripts.WriteProgmem_len;
+  addr += mem->offset;
+
+  unsigned char buf[8];
+
+  pickit5_uint32_to_array(&buf[0], addr);
+  pickit5_uint32_to_array(&buf[4], len);
+
+  int rc = pickit5_download_data(pgm, write_bytes, write_bytes_len, buf, 8, value, len);
+  if(rc == -1) {
+    pmsg_error("sending script failed\n");
+  }
+  if(rc == -2) {
+    pmsg_error("reading script response failed\n");
+  }
+  if(rc == -3) {
+    pmsg_error("failed when sending data\n");
+  }
+  if(rc == -4) {
+    pmsg_error("error check failed\n");
+  }
+  if(rc == -5) {
+    pmsg_error("sending script done message failed\n");
+  }
+  if(rc < 0) {
+    return -1;
+  } else {
+    return len; 
+  }
+}
+
+static int pickit5_tpi_read(const PROGRAMMER *pgm, const AVRPART *p,
+  const AVRMEM *mem, unsigned long addr, int len, unsigned char *value) {
+
+  const unsigned char* read_bytes = my.scripts.ReadProgmem;
+  unsigned int read_bytes_len = my.scripts.ReadProgmem_len;
+
+  addr += mem->offset;
+  unsigned char buf[8];
+
+  pickit5_uint32_to_array(&buf[0], addr);
+  pickit5_uint32_to_array(&buf[4], len);
+  int rc = pickit5_upload_data(pgm, read_bytes, read_bytes_len, buf, 8, value, len);
+
+  if(rc == -1) {
+    pmsg_error("sending script failed\n");
+  } else if (rc == -2) {
+    pmsg_error("unexpected read response\n");
+  } else if (rc == -3) {
+    pmsg_error("reading data memory failed\n");
+  } else if (rc == -4) {
+    pmsg_error("sending script done message failed\n");
+  }
+  if(rc < 0) {
+    return -1;
+  } else {
+    return len; 
+  }
+}
+
 
 static int pickit5_send_script_cmd(const PROGRAMMER *pgm, const unsigned char *scr, unsigned int scr_len,
   const unsigned char *param, unsigned int param_len) {

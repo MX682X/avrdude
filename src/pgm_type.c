@@ -101,6 +101,7 @@ const PROGRAMMER_TYPE programmers_types[] = {   // Name(s) the programmers call 
   {"pickit5_isp", pickit5_initpgm, pickit5_desc},      // "pickit5"
   {"pickit5_jtag", pickit5_initpgm, pickit5_desc},      // "pickit5"
   {"pickit5_pdi", pickit5_initpgm, pickit5_desc},      // "pickit5"
+  {"pickit5_tpi", pickit5_initpgm, pickit5_desc},      // "pickit5"
   {"pickit5_updi", pickit5_initpgm, pickit5_desc},      // "pickit5"
   {"serbb", serbb_initpgm, serbb_desc}, // "SERBB"
   {"serialupdi", serialupdi_initpgm, serialupdi_desc},  // "serialupdi"

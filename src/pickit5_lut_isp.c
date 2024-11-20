@@ -2500,8 +2500,7 @@ const unsigned char switchtoISP_isp_0[11] = {
 
 
 static void pickit_isp_script_init(SCRIPT *scr);
-static void pickit_isp_script_init(SCRIPT *scr)
- {
+static void pickit_isp_script_init(SCRIPT *scr) {
   memset(scr, 0x00, sizeof(SCRIPT));  // Make sure everything is NULL
 
   scr->EnterProgMode = EnterProgMode_isp_0;
