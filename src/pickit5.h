@@ -17,7 +17,6 @@
  */
 
 
-
 #ifndef pickit5_h
 #define pickit5_h
 
@@ -32,4 +31,5 @@ void pickit5_initpgm(PROGRAMMER *pgm);
 }
 #endif
 
-#endif // pickit5_h
+#endif
+

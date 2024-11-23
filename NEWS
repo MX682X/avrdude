@@ -3,12 +3,36 @@ Approximate change log for AVRDUDE by version.
 (For detailed changes, see the version control system logs.)
 
 ----------------------------------------------------------------------
-Changes since version 7.3:
+Changes since version 8.0:
+
+  * Major changes compared to the previous version:
+
+  * New devices supported:
+
+    - AVR128DA28S, AVR128DA32S, AVR128DA48S, AVR128DA64S
+
+  * New programmers supported:
+
+  * New serial adapters supported:
+
+  * Issues fixed:
+
+    - Missing devices in udev rules output? #1915
+
+  * Pull requests:
+
+    - Add AVR128DAxxS parts #1918
+    - Update usbpids in avrdude.conf #1919
+
+  * Internals:
+
+Changes in version 8.0:
 
   * Major changes compared to the previous version:
 
     - Support of multi-memory .hex/.srec files and memory lists #1828
     - New terminal disasm command #1842
+    - GUI implementation of avrdude to demonstrate libavrdude #1714
 
   * New devices supported:
 
@@ -18,6 +42,7 @@ Changes since version 7.3:
   * New programmers supported:
 
     - serprog
+    - pickit5_updi
 
   * New serial adapters supported:
 
@@ -55,6 +80,14 @@ Changes since version 7.3:
     - JTAGICE3 EDBG communication mode relies on hardcoded USBVID #1838
     - avrdude documentation typo(s) attemps #1852
     - Conflicting types for op16_is_mnemo: enum/integer #1851
+    - Writing BOOTROW for Curiosity Nano #1868
+    - Should AVRDUDE be run as root? #1860
+    - Auto-build avrdude.pdf from texinfo sources #1847
+    - Poor coverage of (concept) index in documentation #1582
+    - Warnings when build under NetBSD 10 and OpenBSD 7.5 #1904
+    - Add -e for the location of avrdude executable for test8 #1900
+    - Weird AVR family warning on locked AVR-Dx #1894
+    - How is version.texi created with autotools? #1905
 
   * Pull requests:
 
@@ -129,6 +162,39 @@ Changes since version 7.3:
     - Refine auto-erase strategy #1862
     - Provide -P usb:vid:pid for USB hid i/f and allow
       long -P usb:serno for usblib and hidapi #186
+    - Initialise dryrun flash with realistic random code #1873
+    - Writing BOOTROW for Curiosity Nano #1870
+    - Refine programmer/part/memory compatibility modelling #1869
+    - Provide dev option -c \*/u that shows udev rules #1867
+    - Provide current avrdude.pdf documentation in repo root #1865
+    - doc: Stop building and installing .ps and .dvi #1857
+    - Improve autotools build (part 2/n) #1695
+    - Use correct file locations in the documentation #1637
+    - Deprecate obsolete features and options #1875
+    - Add more hard-coded usbvid/pid to udev rules #1876
+    - Fixes for jtag3 programmers and prep for jtagmkII #1877
+    - SWIG Python wrapper for libavrdude #1714
+    - PICkit 5 support #1863
+    - Make usbproduct available to programmers #1880
+    - Silently skip erasing read-only parts of a memory #1883
+    - Fix ATmega1284/P readsize #1886
+    - Fix addresses for jtag3_pdi boot and apptable #1887
+    - Adapt documentation to new Look and Feel #1892
+    - Adapt tools/test-avrdude script for versatile CI use #1891
+    - Reformat sources #1893
+    - Add to parts, programmers and index in avrdude.pdf #1895 #1902
+    - Fix deprecated types in libavrdude.i #1896
+    - Update build.yml to re-enable Windows on ARM64 MSVC build #1901
+    - Add -e exe option to test8 #1903
+    - Refrain from polling memories other than flash/eeprom #1897
+    - Remove known limitations comment from serprog.c #1906
+    - Improve messaging around locked UPDI parts #1907
+    - Improve Documentation #1908
+    - Silence compiler warnings #1909
+    - Parport build test #1874
+    - CI: test running the built avrdude executable #1888
+    - Add checks for zombie sourcecode problems #1910
+    - Iron out some problems in jtagmkII #1911
 
   * Internals:
 
@@ -1496,11 +1562,11 @@ Version 5.7:
 
       - ATXMEGA64A1
       - ATXMEGA192A1
-      -	ATXMEGA256A1
+      - ATXMEGA256A1
       - ATXMEGA64A3
       - ATXMEGA128A3
       - ATXMEGA192A3
-      -	ATXMEGA256A3
+      - ATXMEGA256A3
       - ATXMEGA256A3B
       - ATXMEGA16A4
       - ATXMEGA32A4
@@ -1770,7 +1836,7 @@ Version 4.1.0
   * Add support for avr910 type programmers (mcu00100, pavr avr910, etc).
 
   * Support new devices: ATmega8535, ATtiny26
-  
+
 
 Version 4.0.0
 

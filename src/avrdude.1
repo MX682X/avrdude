@@ -54,7 +54,7 @@
 .Op Fl V
 .Sh DESCRIPTION
 .Nm Avrdude
-is a program for downloading code and data to Atmel AVR
+is a program for downloading and uploading on-chip memories of Atmel AVR
 microcontrollers.
 .Nm Avrdude
 supports Atmel's STK500 programmer,
@@ -101,13 +101,13 @@ port.
 Connecting to a serial port emulated on top of USB is likely to not
 work at all, or to work abysmally slow.
 .Pp
-If you happen to have a Linux system with at least 4 hardware GPIOs 
-available (like almost all embedded Linux boards) you can do without 
+If you happen to have a Linux system with at least 4 hardware GPIOs
+available (like almost all embedded Linux boards) you can do without
 any additional hardware - just connect them to the SDO, SDI, RESET
 and SCK pins on the AVR and use the linuxgpio programmer type. It bitbangs
 the lines using the Linux sysfs GPIO interface. Of course, care should
 be taken about voltage level compatibility. Also, although not strictly
-required, it is strongly advisable to protect the GPIO pins from 
+required, it is strongly advisable to protect the GPIO pins from
 overcurrent situations in some way. The simplest would be to just put
 some resistors in series or better yet use a 3-state buffer driver like
 the 74HC244. Have a look at https://kolev.info/blog/2013/01/06/avrdude-linuxgpio/ for a more
@@ -186,15 +186,15 @@ AVR910, and the bootloader described in Atmel's application note
 AVR109 (which is also used by the AVR Butterfly evaluation board), are
 supported on a serial port.
 .Pp
-Atmel's JTAG ICE (mkI, mkII, and 3) is supported as well to up- or download memory
-areas from/to an AVR target (no support for on-chip debugging).
-For the JTAG ICE mkII, JTAG, debugWIRE and ISP mode are supported, provided
-it has a firmware revision of at least 4.14 (decimal).
-JTAGICE3 also supports all of JTAG, debugWIRE, and ISP mode.
-See below for the limitations of debugWIRE.
-For ATxmega devices, the JTAG ICE mkII is supported in PDI mode, provided it
-has a revision 1 hardware and firmware version of at least 5.37 (decimal).
-For ATxmega devices, the JTAGICE3 is supported in PDI mode.
+Atmel's JTAG ICE (mkI, mkII, and 3) is supported as well to uploading and
+download memory areas of an AVR target (no support for on-chip debugging).
+For the JTAG ICE mkII, JTAG, debugWIRE and ISP mode are supported,
+provided it has a firmware revision of at least 4.14 (decimal). JTAGICE3
+also supports all of JTAG, debugWIRE, and ISP mode. See below for the
+limitations of debugWIRE. For ATxmega devices, the JTAG ICE mkII is
+supported in PDI mode, provided it has a revision 1 hardware and firmware
+version of at least 5.37 (decimal). For ATxmega devices, the JTAGICE3 is
+supported in PDI mode.
 .Pp
 Atmel-ICE (ARM/AVR) is supported in all modes (JTAG, PDI for Xmega, debugWIRE,
 ISP, UPDI).
@@ -231,8 +231,8 @@ frequency of 6.8 MHz or more: factory-set AVR parts, which typically run
 on an internal oscillator between 1 MHz and 1.6 MHz, cannot be programmed
 using -c ch341a. If libftdi has  has been compiled in
 .Nm avrdude ,
-the avrftdi device adds support for many programmers using FTDI's 2232C/D/H 
-and 4232H parts running in MPSSE mode, which hard-codes (in the chip) 
+the avrftdi device adds support for many programmers using FTDI's 2232C/D/H
+and 4232H parts running in MPSSE mode, which hard-codes (in the chip)
 SCK to bit 1, SDO to bit 2, and SDI to bit 3. Reset is usually bit 4.
 .Pp
 The Atmel DFU bootloader is supported in both, FLIP protocol version 1
@@ -245,6 +245,7 @@ The Curiosity Nano board is supported in UPDI mode. It is dubbed
 .Dq PICkit on Board ,
 thus the name
 .Pa pkobn_updi .
+The MPLAB(R) PICkit 5 is currently only supported in UPDI mode.
 .Pp
 SerialUPDI programmer implementation is based on Microchip's
 .Em pymcuprog Li https://github.com/microchip-pic-avr-tools/pymcuprog
@@ -257,9 +258,8 @@ In a nutshell, this programmer consists of simple USB->UART adapter, diode
 and couple of resistors. It uses serial connection to provide UPDI interface.
 See the texinfo documentation for more details and known issues.
 .Pp
-The jtag2updi programmer is supported,
-and can program AVRs with a UPDI interface.
-Jtag2updi is just a firmware that can be uploaded to an AVR,
+The jtag2updi programmer is supported, and can program AVRs with a UPDI
+interface. Jtag2updi is just a firmware that can be loaded onto an AVR,
 which enables it to interface with avrdude using the jtagice mkii protocol
 via a serial link.
 .Li https://github.com/ElTangas/jtag2updi
@@ -284,7 +284,7 @@ for Teensy specific options.
 .Pp
 Input files can be provided, and output files can be written in
 different file formats, such as raw binary files containing the data
-to download to the chip, Intel Hex format, or Motorola S-Record
+to write to the chip, Intel Hex format, or Motorola S-Record
 format.  There are a number of tools available to produce those files,
 like
 .Xr asl 1
@@ -419,7 +419,7 @@ or
 .Pa ${HOME}/.avrduderc
 file to assign a default programmer to keep from having to specify
 this option on every invocation.
-A full list of all supported programmers is output to the terminal 
+A full list of all supported programmers is output to the terminal
 by using ? as programmer-id.
 If -c ? is specified with a specific part, see
 -p above, then only those programmers are output that expect
@@ -440,7 +440,7 @@ See the config file, located at
 .Pa ${PREFIX}/etc/avrdude.conf ,
 which contains a description of the format.
 .Pp
-If 
+If
 .Ar config-file
 is written as
 .Pa +filename
@@ -808,161 +808,8 @@ of that by erasing pages before programming them unless -e (chip erase) or
 absence of the -e chip erase option any ATxmega or UPDI flash pages not
 affected by the programming will retain their previous content.
 .Pp
-Classic devices may have the following memories in addition to eeprom, flash, signature and lock:
-.Bl -tag -width "  calibration" -compact
-.It   calibration
-One or more bytes of RC oscillator calibration data
-.It   efuse
-Extended fuse byte
-.It   fuse
-Fuse byte in devices that have only a single fuse byte
-.It   hfuse
-High fuse byte
-.It   lfuse
-Low fuse byte
-.It   lock
-Lock byte
-.It prodsig
-Signature, calibration byte(s) and serial number in a small read-only memory,
-which is only documented to be available for ATmega324PB, ATmega328PB,
-ATtiny102 and ATtiny104;
-.Nm
-generally tries to make this memory available, also for parts where it is
-not documented, but not all programmers may be able to read this memory
-.It sigrow
-Memory alias for prodsig
-.It sernum
-The serial number part of prodsig; owing to scarce documentation this may not
-actually turn out to be a serial number or be readable by some programmers
-.It usersig
-Three extra flash pages for firmware settings; this memory is not erased
-during a chip erase. Only some classic parts,
-ATmega(64|128|256|644|1284|2564)RFR2, have a usersig memory. Usersig is
-different to flash in the sense that it can neither be accessed with ISP
-serial programming nor written to by bootloaders;
-.Nm
-offers JTAG programming of classic-part usersig memories. As with all
-flash-type memories the -U option can only write 0-bits but not 1-bits.
-Hence, usersig needs to be erased before a file can be uploaded to this
-memory region, e.g., using -T "erase usersig" -U
-usersig:w:parameters.hex:i
-.It io
-Volatile register memory; it cannot be accessed by external programming
-methods only by bootloaders, which has limited use unless the bootloader
-jumps to the application directly, i.e., without a WDT reset
-.It sram
-Volatile RAM memory; like io it cannot be accessed by external programming
-.El
-.Pp
-ATxmega devices have the following memories in addition to eeprom, flash, signature and lock:
-.Bl -tag -width "calibration" -compact
-.It application
-Application flash area
-.It apptable
-Application table flash area
-.It boot
-Boot flash area
-.It   calibration
-An area of 4 (ATxmega-A series) or 5 bytes (ATxmega-B/C/D/E) with
-oscillator calibration values; this is a sub-memory of prodsig
-.It fuses
-A logical memory of 7 bytes containing all fuseX of a part, which can be
-used to program all fuses at the same time; note that some fuse bytes will
-be reserved, though
-.It fuse0
-A.k.a. jtaguid: JTAG user ID for some devices
-.It fuse1
-Watchdog configuration
-.It fuse6
-Fault detection action configuration TC4/5 for ATxmega E series parts
-.It fuse Ns Em N
-Other fuse bytes of ATxmega devices, where
-.Em N
-is 2, 4 or 5, for system configuration
-.It prodsig
-The production signature row is a read-only memory section for factory
-programmed data such as the calibration values for oscillators or analogue
-modules; it also contains a serial number that consists of the production
-lot number, wafer number and wafer coordinates for the part
-.It sernum
-Serial number with a unique ID for the part consisting of 10 bytes; these
-are part of the prodsig memory above
-.It sigrow
-Memory alias for prodsig
-.It tempsense
-A two-byte memory, which is located within prodsig; it contains a 12-bit
-temperature sensor calibration value
-.It usersig
-Additional flash memory page that can be used for firmware settings; this
-memory is not erased during a chip erase
-.It io
-Volatile register memory;
-.Nm
-can read this memory but not write to it using external programming
-.It sram
-Volatile RAM memory; cannot be usefully accessed by external programming
-.El
-.Pp
-Modern 8-bit AVR devices have the following memories in addition to eeprom, flash, signature and lock:
-.Bl -tag -width "calibration" -compact
-.It fuse0
-A.k.a. wdtcfg: watchdog configuration
-.It fuse1
-A.k.a. bodcfg: brownout detection configuration
-.It fuse2
-A.k.a. osccfg: oscillator configuration
-.It fuse4
-A.k.a. tcd0cfg (not all devices): timer counter type D configuration
-.It fuse5
-A.k.a. syscfg0: system configuration 0
-.It fuse6
-A.k.a. syscfg1: system configuration 1
-.It fuse7
-A.k.a. append or codesize: either the end of the application code section or the code size in blocks of 256/512 bytes
-.It fuse8
-A.k.a. bootend or bootsize: end of the boot section or the boot size in blocks of 256/512 bytes
-.It fusea
-A.k.a. pdicfg: configures/locks updi access; it is the only fuse that consists of two bytes
-.It fuses
-A logical memory of up to 16 bytes containing all fuseX of a part, which can be
-used to program all fuses at the same time
-.It osc16err
-Two bytes typically describing the 16 MHz oscillator frequency error at 3 V and 5 V, respectively
-.It osc20err
-Two bytes typically describing the 20 MHz oscillator frequency error at 3 V and 5 V, respectively
-.It osccal16
-Two oscillator calibration bytes for 16 MHz
-.It osccal20
-Two oscillator calibration bytes for 20 MHz
-.It prodsig
-Read-only memory section for factory programmed data such as the
-signature, calibration values and serial number
-.It sigrow
-Memory alias for prodsig
-.It sernum
-Serial number with a unique ID for the part (10 or 16 bytes)
-.It tempsense
-Temperature sensor calibration values
-.It bootrow
-Extra page of memory that is only accessible by the MCU in bootloader
-code; UDPI can read and write this memory only when the device is
-unlocked
-.It userrow
-Extra page of EEPROM memory that can be used for firmware settings; this
-memory is not erased during a chip erase; UPDI cannot read this memory
-when the device is locked
-.It sib
-Special system information block memory with information about AVR family, chip revision etc.
-.It io
-Volatile register memory;
-.Nm
-can program this memory but this is of limited utility because anything
-written to the io memory will be undefined or lost after reset; writing to
-individual registers in the terminal can still be used, e.g., to test I/O
-ports
-.It sram
-Volatile RAM memory; can be read and written but contents will be lost after reset
-.El
+For a list of all known memories, please refer to the full documentation, eg,
+.Li https://github.com/avrdudes/avrdude/blob/main/avrdude.pdf
 .Pp
 The
 .Ar op
@@ -992,7 +839,7 @@ can be one of:
 .It Ar i
 Intel Hex
 .It Ar I
-Intel Hex with comments on download and tolerance of checksum errors on upload
+Intel Hex with comments on reading from, and tolerance of checksum errors, writing to the AVR
 .It Ar s
 Motorola S-Record
 .It Ar r
@@ -1087,7 +934,7 @@ More
 .Fl v
 options increase verbosity level.
 .It Fl V
-Disable automatic verify check when uploading data with -U.
+Disable automatic verify check when writing data to the AVR with -U.
 .It Fl x Ar extended_param
 Pass
 .Ar extended_param
@@ -1144,7 +991,7 @@ hexadecimal and ASCII form.
 .It Ar dump memory addr
 Read from
 .Ar memory addr
-as many bytes as the most recent 
+as many bytes as the most recent
 .Ar dump memory addr len command
 with this very memory had specified (default 256 bytes), and display them.
 .It Ar dump memory
@@ -1677,18 +1524,22 @@ versions of the bootloader.
 .It Ar dryboot
 These two programmers emulate programming and accept the following parameters:
 .Bl -tag -offset indent -width indent
-.It Ar xinit
+.It Ar init
 Initialise memories with human-readable patterns. Flash memory will be
 randomly configured with respect to bootloader, data and code length.
 Patterns can best be seen with fixed-width font and the :I format
 by inspecting the generated hex file or by using, eg, -U flash:r:-:I.
 Patterns in flash memory are executable and represent benign AVR code, ie,
 no I/O memory access. Choose a fixed seed for reproducible results.
+.It Ar init=<n>
+Shortcut for -x init -x seed=<n> (see below)
 .It Ar random
 Initialise memories with random code and values. Flash memory will be
 randomly configured with respect to bootloader, data and code length.
 Random code in flash will be benign, that is, not accessing I/O memories,
 SRAM or flash. Choose a fixed seed for reproducible results.
+.It Ar random=<n>
+Shortcut for -x random -x seed=<n>
 .It Ar seed=<n>
 Seed random number generator with <n>; the default is time(NULL).
 Setting this option with a fixed n > 0 will make the random choices
@@ -1749,6 +1600,23 @@ when in AVR mode. Use
 for switching to AVR mode, or
 .Ar -x mode=pic
 for switching to PIC mode.
+.It Ar help
+Show help menu and exit.
+.El
+.It Ar PICkit 5
+.It Ar PICkit 4 (PIC mode)
+.Bl -tag -offset indent -width indent
+.It Ar vtarg=<voltage>
+Specify a voltage between 1.8 and 5.5 V that the programmer should supply
+to the target. If there is already a valid voltage applied to the VTG Pin,
+this setting will be ignored. When AVRDUDE detects an external voltage outside
+of this range, it will terminate the operation. You can disable this by
+setting the voltage to 0 V.
+.It Ar hvupdi
+High-voltage UPDI programming is used to enable a UPDI pin that has previously
+been set to RESET or GPIO mode. Use -x hvupdi to enable high-voltage UPDI
+initialization for supported targets. Depending on the target, the HV pulse will
+be applied either on the RST pin, or the UPDI pin.
 .It Ar help
 Show help menu and exit.
 .El
@@ -1858,7 +1726,7 @@ C programming language.
 .Bl -tag -offset indent -width indent
 .It Ar no_blockmode
 Disables the default checking for block transfer capability.
-Use 
+Use
 .Ar no_blockmode
 only if your
 .Ar AVR910
@@ -1950,12 +1818,12 @@ with 0xff. If this option is specified, the urclock programmer will assume
 that the bootloader cannot erase the chip itself. The option is useful
 for backwards-compatible bootloaders that do not implement chip erase.
 .It Ar restore
-Upload unchanged flash input files and trim below the bootloader if
+Write unchanged flash input files and trim below the bootloader if
 needed. This is most useful when one has a backup of the full flash and
 wants to play that back onto the device. No metadata are written in this
 case and no vector patching happens either if it is a vector bootloader.
 However, for vector bootloaders, even under the option -x restore an
-input file will not be uploaded for which the reset vector does not point
+input file will not be written to the AVR for which the reset vector does not point
 to the vector bootloader. This is to avoid writing an input file to the
 device that would render the vector bootloader not functional as it would
 not be reached after reset.
@@ -1980,7 +1848,7 @@ available space then a metadata code byte 0xff is stored nevertheless to
 indicate there are no further metadata available. In absence of
 -x nometadata, the default for the urclock programmer is to write as much
 metadata (filename, data and store information) as the size of the
-uploaded application and the other extended options allow. The subtle
+application and the other extended options allow. The subtle
 difference between -x nometadata and -x nostore is that the latter always
 explicitly stores in flash that no further metadata are available, so that
 a such prepared flash can always be queried with
@@ -2002,7 +1870,7 @@ Show help menu and exit.
 .It Ar buspirate
 .Bl -tag -offset indent -width indent
 .It Ar reset=cs,aux,aux2
-The default setup assumes the BusPirate's CS output pin connected to 
+The default setup assumes the BusPirate's CS output pin connected to
 the RESET pin on AVR side. It is however possible to have multiple AVRs
 connected to the same BP with SDI, SDO and SCK lines common for all of them.
 In such a case one AVR should have its RESET connected to BusPirate's
@@ -2014,9 +1882,9 @@ pin and if your BusPirate has an
 pin (only available on BusPirate version v1a with firmware 3.0 or newer)
 use that to activate RESET on the third AVR.
 .Pp
-It may be a good idea to decouple the BusPirate and the AVR's SPI buses from 
+It may be a good idea to decouple the BusPirate and the AVR's SPI buses from
 each other using a 3-state bus buffer. For example 74HC125 or 74HC244 are some
-good candidates with the latches driven by the appropriate reset pin (cs, 
+good candidates with the latches driven by the appropriate reset pin (cs,
 aux or aux2). Otherwise the SPI traffic in one active circuit may interfere
 with programming the AVR in the other design.
 .It Ar spifreq=<0..7>
@@ -2044,12 +1912,12 @@ The only advantage of the "raw-wire" mode is the different SPI frequencies
 available. Paged writing is not implemented in this mode.
 .It Ar ascii
 Attempt to use ASCII mode even when the firmware supports BinMode (binary
-mode). 
+mode).
 BinMode is supported in firmware 2.7 and newer, older FW's either don't
-have BinMode or their BinMode is buggy. ASCII mode is slower and makes 
+have BinMode or their BinMode is buggy. ASCII mode is slower and makes
 the above
 .Ar reset= , spifreq=
-and 
+and
 .Ar rawfreq=
 parameters unavailable. Be aware that ASCII mode is not guaranteed to work
 with newer firmware versions, and is retained only to maintain compatibility
@@ -2060,22 +1928,22 @@ whole pages to be written to AVR flash memory at once, resulting in a
 significant write speed increase. If use of this mode is not desirable for some
 reason, this option disables it.
 .It Ar nopagedread
-Newer firmware versions support in binary mode SPI command some AVR Extended 
+Newer firmware versions support in binary mode SPI command some AVR Extended
 Commands. Using the "Bulk Memory Read from Flash" results in a
 significant read speed increase. If use of this mode is not desirable for some
 reason, this option disables it.
 .It Ar cpufreq=<125..4000>
-This sets the AUX pin to output a frequency of 
+This sets the AUX pin to output a frequency of
 .Ar n
 kHz. Connecting
-the AUX pin to the XTAL1 pin of your MCU, you can provide it a clock, 
+the AUX pin to the XTAL1 pin of your MCU, you can provide it a clock,
 for example when it needs an external clock because of wrong fuses settings.
-Make sure the CPU frequency is at least four times the SPI frequency.  
+Make sure the CPU frequency is at least four times the SPI frequency.
 .It Ar serial_recv_timeout=<1...>
-This sets the serial receive timeout to the given value. 
-The timeout happens every time avrdude waits for the BusPirate prompt. 
-Especially in ascii mode this happens very often, so setting a smaller value 
-can speed up programming a lot. 
+This sets the serial receive timeout to the given value.
+The timeout happens every time avrdude waits for the BusPirate prompt.
+Especially in ascii mode this happens very often, so setting a smaller value
+can speed up programming a lot.
 The default value is 100ms. Using 10ms might work in most cases.
 .It Ar help
 Show help menu and exit.
@@ -2129,11 +1997,11 @@ Show help menu and exit.
 Connection to the PICkit2 programmer:
 .Bd -literal
 (AVR)    (PICkit2)
-RST  -   VPP/MCLR (1) 
-VDD  -   VDD Target (2) -- possibly optional if AVR self powered 
-GND  -   GND (3) 
+RST  -   VPP/MCLR (1)
+VDD  -   VDD Target (2) -- possibly optional if AVR self powered
+GND  -   GND (3)
 SDI  -   PGD (4)
-SCLK -   PDC (5) 
+SCLK -   PDC (5)
 SDO  -   AUX (6)
 .Ed
 .Bl -tag -offset indent -width indent
@@ -2286,7 +2154,7 @@ Alternative location of the per-user configuration file if above file does not e
 Initialization file for the
 .Xr readline 3
 library
-.It Pa <prefix>/doc/avrdude/avrdude.pdf
+.It Pa <prefix>/share/doc/avrdude/avrdude.pdf
 User manual
 .El
 .\" .Sh EXAMPLES
@@ -2359,6 +2227,6 @@ using USBtinyISP, and send must be a multiple of four bytes.
 .Pp
 The avrftdi driver allows one to select specific devices using any combination of vid,pid
 serial number (usbsn) vendor description (usbvendoror part description (usbproduct)
-as seen with lsusb or whatever tool used to view USB device information. Multiple 
+as seen with lsusb or whatever tool used to view USB device information. Multiple
 devices can be on the bus at the same time. For the H parts, which have multiple MPSSE
 interfaces, the interface can also be selected.  It defaults to interface 'A'.

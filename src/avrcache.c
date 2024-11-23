@@ -76,7 +76,7 @@
  * avr_chip_erase_cached() erases the chip and discards pending writes() to
  * flash or EEPROM. It presets the flash cache to all 0xff alleviating the
  * need to read from the device flash. However, if the programmer serves
- * bootloaders (pgm->prog_modes & PM_SPM) then the flash cache is reset
+ * bootloaders is_spm(pgm) then the flash cache is reset
  * instead, necessitating flash memory be fetched from the device on first
  * read; the reason for this is that bootloaders emulate chip erase and they
  * won't overwrite themselves (some bootloaders, eg, optiboot ignore chip
@@ -99,7 +99,7 @@
  * This file also holds the following utility functions
  *
  * // Does the programmer/memory combo have paged memory access?
- * int avr_has_paged_access(const PROGRAMMER *pgm, const AVRMEM *mem);
+ * int avr_has_paged_access(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem);
  *
  * // Read the page containing addr from the device into buf
  * int avr_read_page_default(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, int addr, unsigned char *buf);
@@ -112,7 +112,6 @@
  *
  */
 
-
 /*
  * Paged access?
  *  - Programmer must have paged routines
@@ -123,13 +122,11 @@
  * Note that in this definition the page size can be 1
  */
 
-int avr_has_paged_access(const PROGRAMMER *pgm, const AVRMEM *mem) {
+int avr_has_paged_access(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem) {
   return pgm->paged_load && pgm->paged_write &&
-    mem->page_size > 0 && (mem->page_size & (mem->page_size-1)) == 0 &&
-    mem->size > 0 && mem->size % mem->page_size == 0 &&
-    mem_is_paged_type(mem);
+    mem->page_size > 0 && (mem->page_size & (mem->page_size - 1)) == 0 &&
+    mem->size > 0 && mem->size%mem->page_size == 0 && mem_is_paged_type(mem) && !(p && avr_mem_exclude(pgm, p, mem));
 }
-
 
 #define fallback_read_byte (pgm->read_byte != avr_read_byte_cached? led_read_byte: avr_read_byte_default)
 #define fallback_write_byte (pgm->write_byte != avr_write_byte_cached? led_write_byte: avr_write_byte_default)
@@ -145,10 +142,10 @@ int avr_has_paged_access(const PROGRAMMER *pgm, const AVRMEM *mem) {
  *       + LIBAVRDUDE_SUCCESS (0) if the fallback of bytewise read succeeded
  */
 int avr_read_page_default(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, int addr, unsigned char *buf) {
-  if(!avr_has_paged_access(pgm, mem) || addr < 0 || addr >= mem->size)
+  if(!avr_has_paged_access(pgm, p, mem) || addr < 0 || addr >= mem->size)
     return LIBAVRDUDE_GENERAL_FAILURE;
 
-  int rc, pgsize = mem->page_size, base = addr & ~(pgsize-1);
+  int rc, pgsize = mem->page_size, base = addr & ~(pgsize - 1);
 
   if(pgsize == 1)
     return fallback_read_byte(pgm, p, mem, addr, buf);
@@ -157,6 +154,7 @@ int avr_read_page_default(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM 
   led_set(pgm, LED_PGM);
 
   unsigned char *pagecopy = mmt_malloc(pgsize);
+
   memcpy(pagecopy, mem->buf + base, pgsize);
   if((rc = pgm->paged_load(pgm, p, mem, pgsize, base, pgsize)) >= 0)
     memcpy(buf, mem->buf + base, pgsize);
@@ -164,8 +162,8 @@ int avr_read_page_default(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM 
 
   if(rc < 0 && pgm->read_byte != avr_read_byte_cached) {
     rc = LIBAVRDUDE_SUCCESS;
-    for(int i=0; i<pgsize; i++) {
-      if(pgm->read_byte(pgm, p, mem, base+i, pagecopy+i) < 0) {
+    for(int i = 0; i < pgsize; i++) {
+      if(pgm->read_byte(pgm, p, mem, base + i, pagecopy + i) < 0) {
         rc = LIBAVRDUDE_GENERAL_FAILURE;
         break;
       }
@@ -182,7 +180,6 @@ int avr_read_page_default(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM 
   return rc;
 }
 
-
 /*
  * Write the data page to the device into the page containing addr
  *   - Caller to provide all mem->page_size bytes incl padding if any
@@ -190,15 +187,16 @@ int avr_read_page_default(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM 
  *   - Uses write_byte() if memory page size is one, otherwise paged_write()
  */
 int avr_write_page_default(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, int addr, unsigned char *data) {
-  if(!avr_has_paged_access(pgm, mem) || addr < 0 || addr >= mem->size)
+  if(!avr_has_paged_access(pgm, p, mem) || addr < 0 || addr >= mem->size)
     return LIBAVRDUDE_GENERAL_FAILURE;
 
-  int rc, pgsize = mem->page_size, base = addr & ~(pgsize-1);
+  int rc, pgsize = mem->page_size, base = addr & ~(pgsize - 1);
 
   if(pgsize == 1)
     return fallback_write_byte(pgm, p, mem, addr, *data);
 
   unsigned char *pagecopy = mmt_malloc(pgsize);
+
   memcpy(pagecopy, mem->buf + base, pgsize);
   memcpy(mem->buf + base, data, pgsize);
   rc = pgm->paged_write(pgm, p, mem, pgsize, base, pgsize);
@@ -207,7 +205,6 @@ int avr_write_page_default(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM
 
   return rc;
 }
-
 
 // Could memory region s1 be the result of a NOR-memory copy of s3 onto s2?
 int avr_is_and(const unsigned char *s1, const unsigned char *s2, const unsigned char *s3, size_t n) {
@@ -218,12 +215,11 @@ int avr_is_and(const unsigned char *s1, const unsigned char *s2, const unsigned 
   return 1;
 }
 
-
 static int cacheAddress(int addr, const AVR_Cache *cp, const AVRMEM *mem) {
   int cacheaddr = addr + (int) (mem->offset - cp->offset);
 
-  if(cacheaddr < 0 || cacheaddr >= cp->size) { // Should never happen (unless offsets wrong in avrdude.conf)
-    pmsg_error("%s cache address 0x%04x out of range [0, 0x%04x]\n", mem->desc, cacheaddr, cp->size-1);
+  if(cacheaddr < 0 || cacheaddr >= cp->size) {  // Should never happen (unless offsets wrong in avrdude.conf)
+    pmsg_error("%s cache address 0x%04x out of range [0, 0x%04x]\n", mem->desc, cacheaddr, cp->size - 1);
     return LIBAVRDUDE_GENERAL_FAILURE;
   }
 
@@ -235,21 +231,22 @@ static int cacheAddress(int addr, const AVR_Cache *cp, const AVRMEM *mem) {
   return cacheaddr;
 }
 
+static int loadCachePage(AVR_Cache *cp, const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem,
+  int addr, int cacheaddr, int nlOnErr) {
 
-static int loadCachePage(AVR_Cache *cp, const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, int addr, int cacheaddr, int nlOnErr) {
   int pgno = cacheaddr/cp->page_size;
 
   if(!cp->iscached[pgno]) {
     // Read cached section from device
-    int cachebase = cacheaddr & ~(cp->page_size-1);
-    if(avr_read_page_default(pgm, p, mem, addr & ~(cp->page_size-1), cp->cont + cachebase) < 0) {
+    int cachebase = cacheaddr & ~(cp->page_size - 1);
+
+    if(avr_read_page_default(pgm, p, mem, addr & ~(cp->page_size - 1), cp->cont + cachebase) < 0) {
       report_progress(1, -1, NULL);
       if(nlOnErr && quell_progress)
         msg_info("\n");
       pmsg_error("unable to read %s page at addr 0x%04x\n", mem->desc, addr);
       return LIBAVRDUDE_GENERAL_FAILURE;
     }
-
     // Copy last read device page, so we can later check for changes
     memcpy(cp->copy + cachebase, cp->cont + cachebase, cp->page_size);
     cp->iscached[pgno] = 1;
@@ -258,22 +255,21 @@ static int loadCachePage(AVR_Cache *cp, const PROGRAMMER *pgm, const AVRPART *p,
   return LIBAVRDUDE_SUCCESS;
 }
 
-
 static int initCache(AVR_Cache *cp, const PROGRAMMER *pgm, const AVRPART *p) {
   AVRMEM *basemem = cp == pgm->cp_flash? avr_locate_flash(p): cp == pgm->cp_eeprom? avr_locate_eeprom(p):
     cp == pgm->cp_bootrow? avr_locate_bootrow(p): avr_locate_usersig(p);
 
-  if(!basemem || !avr_has_paged_access(pgm, basemem))
+  if(!basemem || !avr_has_paged_access(pgm, p, basemem))
     return LIBAVRDUDE_GENERAL_FAILURE;
 
   cp->size = basemem->size;
   cp->page_size = basemem->page_size;
   cp->offset = basemem->offset;
   cp->cont = mmt_malloc(cp->size);
-  cp->copy = mmt_malloc( cp->size);
+  cp->copy = mmt_malloc(cp->size);
   cp->iscached = mmt_malloc(cp->size/cp->page_size);
 
-  if((pgm->prog_modes & PM_SPM) && mem_is_in_flash(basemem)) { // Could be vector bootloader
+  if(is_spm(pgm) && mem_is_in_flash(basemem)) {  // Could be vector bootloader
     // Caching the vector page hands over to the progammer that then can patch the reset vector
     if(loadCachePage(cp, pgm, p, basemem, 0, 0, 0) < 0)
       return LIBAVRDUDE_GENERAL_FAILURE;
@@ -282,21 +278,22 @@ static int initCache(AVR_Cache *cp, const PROGRAMMER *pgm, const AVRPART *p) {
   return LIBAVRDUDE_SUCCESS;
 }
 
+static int writeCachePage(AVR_Cache *cp, const PROGRAMMER *pgm, const AVRPART *p,
+  const AVRMEM *mem, int base, int nlOnErr) {
 
-static int writeCachePage(AVR_Cache *cp, const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, int base, int nlOnErr) {
   led_clr(pgm, LED_ERR);
   led_set(pgm, LED_PGM);
   // Write modified page cont to device; if unsuccessful try bytewise access
   if(avr_write_page_default(pgm, p, mem, base, cp->cont + base) < 0) {
     if(pgm->read_byte != avr_read_byte_cached && pgm->write_byte != avr_write_byte_cached) {
-      for(int i=0; i < cp->page_size; i++)
-        if(cp->cont[base+i] != cp->copy[base+i])
-          if(pgm->write_byte(pgm, p, mem, base+i, cp->cont[base+i]) < 0 ||
-             pgm->read_byte(pgm, p, mem, base+i, cp->copy+base+i) < 0) {
+      for(int i = 0; i < cp->page_size; i++)
+        if(cp->cont[base + i] != cp->copy[base + i])
+          if(pgm->write_byte(pgm, p, mem, base + i, cp->cont[base + i]) < 0 ||
+            pgm->read_byte(pgm, p, mem, base + i, cp->copy + base + i) < 0) {
             report_progress(1, -1, NULL);
             if(nlOnErr && quell_progress)
               msg_info("\n");
-            pmsg_error("%s access error at addr 0x%04x\n", mem->desc, base+i);
+            pmsg_error("%s access error at addr 0x%04x\n", mem->desc, base + i);
             goto error;
           }
 
@@ -327,35 +324,34 @@ error:
   return LIBAVRDUDE_GENERAL_FAILURE;
 }
 
-
 // A coarse guess where any bootloader might start (prob underestimates the start)
 static int guessBootStart(const PROGRAMMER *pgm, const AVRPART *p) {
   int bootstart = 0;
   const AVR_Cache *cp = pgm->cp_flash;
 
-  if(p->prog_modes & PM_UPDI)   // Modern AVRs put the bootloader at 0
+  if(is_updi(p))   // Modern AVRs put the bootloader at 0
     return 0;
 
   if(p->n_boot_sections > 0 && p->boot_section_size > 0)
-    bootstart = cp->size - (p->boot_section_size<<(p->n_boot_sections-1));
+    bootstart = cp->size - (p->boot_section_size << (p->n_boot_sections - 1));
 
   if(bootstart <= cp->size/2 || bootstart >= cp->size)
     bootstart = cp->size > 32768? cp->size - 16384: cp->size*3/4;
 
-  return bootstart & ~(cp->page_size-1);
+  return bootstart & ~(cp->page_size - 1);
 }
-
 
 // Page erase but without error messages if it does not work
 static int silent_page_erase(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *m, unsigned int a) {
   int bakverb = verbose;
+
   verbose = -123;
   int ret = pgm->page_erase? pgm->page_erase(pgm, p, m, a): -1;
+
   verbose = bakverb;
 
   return ret;
 }
-
 
 typedef struct {
   AVRMEM *mem;
@@ -363,22 +359,26 @@ typedef struct {
   int isflash, iseeprom, zopaddr, pgerase;
 } Cache_desc;
 
-
 // Write flash, EEPROM, bootrow and usersig caches to device and free them
 int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
   Cache_desc mems[] = {
-    { avr_locate_flash(p), pgm->cp_flash, 1, 0, -1, 0 },
-    { avr_locate_eeprom(p), pgm->cp_eeprom, 0, 1, -1, 0 },
-    { avr_locate_bootrow(p), pgm->cp_bootrow, 0, 0, -1, 0 },
-    { avr_locate_usersig(p), pgm->cp_usersig, 0, 0, -1, 0 },
+    {avr_locate_flash(p), pgm->cp_flash, 1, 0, -1, 0},
+    {avr_locate_eeprom(p), pgm->cp_eeprom, 0, 1, -1, 0},
+    {avr_locate_bootrow(p), pgm->cp_bootrow, 0, 0, -1, 0},
+    {avr_locate_usersig(p), pgm->cp_usersig, 0, 0, -1, 0},
   };
 
   int chpages = 0;
   bool chiperase = 0;
+
   // Count page changes and find a page that needs a clear bit set
-  for(size_t i = 0; i < sizeof mems/sizeof*mems; i++) {
+  for(size_t i = 0; i < sizeof mems/sizeof *mems; i++) {
+    if(mems[i].mem && avr_mem_exclude(pgm, p, mems[i].mem))     // Zap mem if excluded combo
+      memset(mems + i, 0, sizeof *mems);
+
     AVRMEM *mem = mems[i].mem;
     AVR_Cache *cp = mems[i].cp;
+
     if(!mem || !cp->cont)
       continue;
 
@@ -399,14 +399,14 @@ int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
   fflush(stderr);
 
   // Check whether page erase needed and working and whether chip erase needed
-  for(size_t i = 0; i < sizeof mems/sizeof*mems; i++) {
+  for(size_t i = 0; i < sizeof mems/sizeof *mems; i++) {
     AVRMEM *mem = mems[i].mem;
     AVR_Cache *cp = mems[i].cp;
 
     if(!mem)
       continue;
 
-    if(!cp->cont)           // Ensure cache is initialised from now on
+    if(!cp->cont)               // Ensure cache is initialised from now on
       if(initCache(cp, pgm, p) < 0) {
         if(quell_progress)
           msg_info("\n");
@@ -417,7 +417,7 @@ int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
     if(chiperase || mems[i].zopaddr < 0)
       continue;
 
-    int n=mems[i].zopaddr;
+    int n = mems[i].zopaddr;
 
     if(writeCachePage(cp, pgm, p, mem, n, 1) < 0)
       return LIBAVRDUDE_GENERAL_FAILURE;
@@ -426,7 +426,6 @@ int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
       chpages--;
       continue;
     }
-
     // Probably NOR memory, check out page erase
     if(silent_page_erase(pgm, p, mem, n) >= 0) {
       if(writeCachePage(cp, pgm, p, mem, n, 1) < 0)
@@ -439,7 +438,7 @@ int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
       }
     }
 
-    if(!mem_is_user_type(mems[i].mem)) // Only force CE if unable to write to flash/EEPROM
+    if(!mem_is_usersig(mems[i].mem))    // CE does not erase usersig
       chiperase = 1;
   }
 
@@ -455,13 +454,15 @@ int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
     }
 
     int nrd = 0;
+
     // Count read operations needed
-    for(size_t i = 0; i < sizeof mems/sizeof*mems; i++) {
+    for(size_t i = 0; i < sizeof mems/sizeof *mems; i++) {
       AVRMEM *mem = mems[i].mem;
       AVR_Cache *cp = mems[i].cp;
+
       if(!mem)
         continue;
-      if(mem_is_user_type(mem)) // CE does not affect bootrow/userrow
+      if(mem_is_usersig(mem))   // CE does not affect usersig/userrow
         continue;
 
       for(int pgno = 0, n = 0; n < cp->size; pgno++, n += cp->page_size)
@@ -472,12 +473,13 @@ int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
     report_progress(0, 1, "Reading");
     if(nrd) {
       // Read full flash and EEPROM
-      for(size_t i = 0; i < sizeof mems/sizeof*mems; i++) {
+      for(size_t i = 0; i < sizeof mems/sizeof *mems; i++) {
         AVRMEM *mem = mems[i].mem;
         AVR_Cache *cp = mems[i].cp;
+
         if(!mem)
           continue;
-        if(mem_is_user_type(mem)) // CE does not affect bootrow/userrow
+        if(mem_is_usersig(mem)) // CE does not affect usersig/userrow
           continue;
 
         for(int ird = 0, pgno = 0, n = 0; n < cp->size; pgno++, n += cp->page_size) {
@@ -499,25 +501,25 @@ int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
       pmsg_error("chip erase failed\n");
       return LIBAVRDUDE_GENERAL_FAILURE;
     }
-
     // Update cache copies after chip erase so that writing back is efficient
-    for(size_t i = 0; i < sizeof mems/sizeof*mems; i++) {
+    for(size_t i = 0; i < sizeof mems/sizeof *mems; i++) {
       AVRMEM *mem = mems[i].mem;
       AVR_Cache *cp = mems[i].cp;
+
       if(!mem)
         continue;
-      if(mem_is_user_type(mem)) // CE does not affect bootrow/userrow
+      if(mem_is_usersig(mem))   // CE does not affect usersig/userrow
         continue;
 
       if(mems[i].isflash) {
-        memset(cp->copy, 0xff, cp->size); // record device memory as erased
-        if(pgm->prog_modes & PM_SPM) { // Bootloaders will not overwrite themselves
+        memset(cp->copy, 0xff, cp->size); // Record device memory as erased
+        if(is_spm(pgm)) {       // Bootloaders will not overwrite themselves
           // Read back generously estimated bootloader section to avoid verification errors
           int bootstart = guessBootStart(pgm, p);
           int nbo = (cp->size - bootstart)/cp->page_size;
 
           for(int ibo = 0, n = bootstart; n < cp->size; n += cp->page_size) {
-            report_progress(1+ibo++, nbo+2, NULL);
+            report_progress(1 + ibo++, nbo + 2, NULL);
             if(avr_read_page_default(pgm, p, mem, n, cp->copy + n) < 0) {
               report_progress(1, -1, NULL);
               if(quell_progress)
@@ -550,10 +552,12 @@ int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
   }
 
   int nwr = 0;
+
   // Count number of writes
-  for(size_t i = 0; i < sizeof mems/sizeof*mems; i++) {
+  for(size_t i = 0; i < sizeof mems/sizeof *mems; i++) {
     AVRMEM *mem = mems[i].mem;
     AVR_Cache *cp = mems[i].cp;
+
     if(!mem)
       continue;
 
@@ -565,9 +569,10 @@ int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
   report_progress(0, 1, "Writing");
   if(nwr) {
     // Write all modified pages to the device
-    for(size_t i = 0; i < sizeof mems/sizeof*mems; i++) {
+    for(size_t i = 0; i < sizeof mems/sizeof *mems; i++) {
       AVRMEM *mem = mems[i].mem;
       AVR_Cache *cp = mems[i].cp;
+
       if(!mem || !cp->cont)
         continue;
 
@@ -595,7 +600,6 @@ int avr_flush_cache(const PROGRAMMER *pgm, const AVRPART *p) {
   return LIBAVRDUDE_SUCCESS;
 }
 
-
 /*
  * Read byte via a read/write cache
  *  - Used if paged routines available and if memory is flash, EEPROM, bootrow or usersig
@@ -607,7 +611,7 @@ int avr_read_byte_cached(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *
   unsigned long addr, unsigned char *value) {
 
   // Use pgm->read_byte() if not flash/EEPROM/bootrow/usersig or no paged access
-  if(!avr_has_paged_access(pgm, mem))
+  if(!avr_has_paged_access(pgm, p, mem))
     return fallback_read_byte(pgm, p, mem, addr, value);
 
   // If address is out of range synchronise cache and, if successful, pretend reading a zero
@@ -626,6 +630,7 @@ int avr_read_byte_cached(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *
       return LIBAVRDUDE_GENERAL_FAILURE;
 
   int cacheaddr = cacheAddress((int) addr, cp, mem);
+
   if(cacheaddr < 0)
     return LIBAVRDUDE_GENERAL_FAILURE;
 
@@ -637,7 +642,6 @@ int avr_read_byte_cached(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *
 
   return LIBAVRDUDE_SUCCESS;
 }
-
 
 /*
  * Write byte via a read/write cache
@@ -651,7 +655,7 @@ int avr_write_byte_cached(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM 
   unsigned long addr, unsigned char data) {
 
   // Use pgm->write_byte() if not flash/EEPROM/bootrow/usersig or no paged access
-  if(!avr_has_paged_access(pgm, mem))
+  if(!avr_has_paged_access(pgm, p, mem))
     return fallback_write_byte(pgm, p, mem, addr, data);
 
   // If address is out of range synchronise caches with device and return whether successful
@@ -666,6 +670,7 @@ int avr_write_byte_cached(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM 
       return LIBAVRDUDE_GENERAL_FAILURE;
 
   int cacheaddr = cacheAddress((int) addr, cp, mem);
+
   if(cacheaddr < 0)
     return LIBAVRDUDE_GENERAL_FAILURE;
 
@@ -684,13 +689,12 @@ int avr_write_byte_cached(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM 
   return LIBAVRDUDE_SUCCESS;
 }
 
-
 // Erase the chip and set the cache accordingly
 int avr_chip_erase_cached(const PROGRAMMER *pgm, const AVRPART *p) {
   Cache_desc mems[] = {
-    { avr_locate_flash(p), pgm->cp_flash, 1, 0, -1, 0 },
-    { avr_locate_eeprom(p), pgm->cp_eeprom, 0, 1, -1, 0 },
-    { avr_locate_bootrow(p), pgm->cp_bootrow, 0, 0, -1, 0 },
+    {avr_locate_flash(p), pgm->cp_flash, 1, 0, -1, 0},
+    {avr_locate_eeprom(p), pgm->cp_eeprom, 0, 1, -1, 0},
+    {avr_locate_bootrow(p), pgm->cp_bootrow, 0, 0, -1, 0},
     // usersig is unaffected by CE
   };
   int rc;
@@ -698,11 +702,11 @@ int avr_chip_erase_cached(const PROGRAMMER *pgm, const AVRPART *p) {
   if((rc = led_chip_erase(pgm, p)) < 0)
     return rc;
 
-  for(size_t i = 0; i < sizeof mems/sizeof*mems; i++) {
+  for(size_t i = 0; i < sizeof mems/sizeof *mems; i++) {
     AVRMEM *mem = mems[i].mem;
     AVR_Cache *cp = mems[i].cp;
 
-    if(!mem || !avr_has_paged_access(pgm, mem))
+    if(!mem || !avr_has_paged_access(pgm, p, mem))
       continue;
 
     if(!cp->cont)               // Init cache if needed
@@ -710,15 +714,16 @@ int avr_chip_erase_cached(const PROGRAMMER *pgm, const AVRPART *p) {
         return LIBAVRDUDE_GENERAL_FAILURE;
 
     if(mems[i].isflash) {
-      if(pgm->prog_modes & PM_SPM) { // Reset cache to unknown
+      if(is_spm(pgm)) {         // Reset cache to unknown
         memset(cp->iscached, 0, cp->size/cp->page_size);
-      } else {                  // preset all pages as erased
+      } else {                  // Preset all pages as erased
         memset(cp->copy, 0xff, cp->size);
         memset(cp->cont, 0xff, cp->size);
         memset(cp->iscached, 1, cp->size/cp->page_size);
       }
     } else {                    // Test whether cached EEPROM/bootrow pages were zapped
       bool erased = 0;
+
       for(int pgno = 0, n = 0; n < cp->size; pgno++, n += cp->page_size) {
         if(cp->iscached[pgno]) {
           if(!is_memset(cp->copy + n, 0xff, cp->page_size)) { // Page has data?
@@ -744,14 +749,12 @@ int avr_chip_erase_cached(const PROGRAMMER *pgm, const AVRPART *p) {
   return LIBAVRDUDE_SUCCESS;
 }
 
-
 // Erase a page and synchronise it with the cache
-int avr_page_erase_cached(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem,
-  unsigned int uaddr) {
+int avr_page_erase_cached(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, unsigned int uaddr) {
 
   int addr = uaddr;
 
-  if(!avr_has_paged_access(pgm, mem) || addr < 0 || addr >= mem->size)
+  if(!avr_has_paged_access(pgm, p, mem) || addr < 0 || addr >= mem->size)
     return LIBAVRDUDE_GENERAL_FAILURE;
 
   if(mem->page_size == 1) {
@@ -770,6 +773,7 @@ int avr_page_erase_cached(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM 
       return LIBAVRDUDE_GENERAL_FAILURE;
 
   int cacheaddr = cacheAddress(addr, cp, mem);
+
   if(cacheaddr < 0)
     return LIBAVRDUDE_GENERAL_FAILURE;
 
@@ -780,26 +784,26 @@ int avr_page_erase_cached(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM 
   if(loadCachePage(cp, pgm, p, mem, (int) addr, cacheaddr, 0) < 0)
     return LIBAVRDUDE_GENERAL_FAILURE;
 
-  if(!is_memset(cp->cont + (cacheaddr & ~(cp->page_size-1)), 0xff, cp->page_size))
+  if(!is_memset(cp->cont + (cacheaddr & ~(cp->page_size - 1)), 0xff, cp->page_size))
     return LIBAVRDUDE_GENERAL_FAILURE;
 
   return LIBAVRDUDE_SUCCESS;
 }
 
-
 // Free cache(s) discarding any pending writes
 int avr_reset_cache(const PROGRAMMER *pgm, const AVRPART *p_unused) {
   AVR_Cache *mems[] = { pgm->cp_flash, pgm->cp_eeprom, pgm->cp_bootrow, pgm->cp_usersig };
 
-  for(size_t i = 0; i < sizeof mems/sizeof*mems; i++) {
+  for(size_t i = 0; i < sizeof mems/sizeof *mems; i++) {
     AVR_Cache *cp = mems[i];
+
     if(cp->cont)
       mmt_free(cp->cont);
     if(cp->copy)
       mmt_free(cp->copy);
     if(cp->iscached)
       mmt_free(cp->iscached);
-    memset(cp, 0, sizeof*cp);
+    memset(cp, 0, sizeof *cp);
   }
 
   return LIBAVRDUDE_SUCCESS;

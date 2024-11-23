@@ -23,6 +23,7 @@ set(GENERATED_TEXINFOS
     programmers.texi
     programmer_types.texi
     parts.texi
+    avrstats.texi
     version.texi
     )
 
@@ -40,9 +41,9 @@ find_program(TEXI2HTML_EXECUTABLE NAMES texi2html)
 add_custom_target(avrdude_binaries DEPENDS avrdude conf)
 
 add_custom_command(
-    OUTPUT programmers.txt
-    DEPENDS avrdude_binaries
-    COMMAND $<TARGET_FILE:avrdude> -C ${AVRDUDE_CONF} -c ? 2>&1 | more > programmers.txt
+    OUTPUT programmers.texi
+    DEPENDS avrdude_binaries ${CMAKE_CURRENT_SOURCE_DIR}/programmers.sed
+    COMMAND $<TARGET_FILE:avrdude> -C ${AVRDUDE_CONF} -c ? 2>&1 | grep = | sed -f ${CMAKE_CURRENT_SOURCE_DIR}/programmers.sed > programmers.texi
     VERBATIM
     )
 
@@ -54,19 +55,9 @@ add_custom_command(
     )
 
 add_custom_command(
-    OUTPUT parts.txt
-    DEPENDS avrdude_binaries
-    COMMAND $<TARGET_FILE:avrdude> -C ${AVRDUDE_CONF} -p ? 2>&1 | more > parts.txt
-    VERBATIM
-    )
-
-add_custom_command(
-    OUTPUT programmers.texi
-    DEPENDS programmers.txt
-    COMMAND ${CMAKE_COMMAND}
-        -D TXT_FILE=programmers.txt
-        -D TEXI_FILE=programmers.texi
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/programmers.cmake"
+    OUTPUT parts.texi
+    DEPENDS avrdude_binaries ${CMAKE_CURRENT_SOURCE_DIR}/parts.sed
+    COMMAND $<TARGET_FILE:avrdude> -C ${AVRDUDE_CONF} -p ? 2>&1 | grep = | sed -f ${CMAKE_CURRENT_SOURCE_DIR}/parts.sed > parts.texi
     VERBATIM
     )
 
@@ -81,21 +72,21 @@ add_custom_command(
     )
 
 add_custom_command(
-    OUTPUT parts.texi
-    DEPENDS parts.txt
-    COMMAND ${CMAKE_COMMAND}
-        -D TXT_FILE=parts.txt
-        -D TEXI_FILE=parts.texi
-        -D COMMENTS_FILE=${CMAKE_CURRENT_SOURCE_DIR}/parts_comments.txt
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/parts.cmake"
+    OUTPUT version.texi
+    DEPENDS avrdude_binaries
+    COMMAND ${CMAKE_COMMAND} -E echo "@set EDITION ${DOCS_VERSION}" > version.texi
+    COMMAND ${CMAKE_COMMAND} -E echo "@set VERSION ${DOCS_VERSION}" >> version.texi
+    COMMAND ${CMAKE_COMMAND} -E echo "@set UPDATED ${DOCS_UPDATED}" >> version.texi
     VERBATIM
     )
 
 add_custom_command(
-    OUTPUT version.texi
-    COMMAND ${CMAKE_COMMAND} -E echo "@set EDITION ${DOCS_VERSION}" > version.texi
-    COMMAND ${CMAKE_COMMAND} -E echo "@set VERSION ${DOCS_VERSION}" >> version.texi
-    COMMAND ${CMAKE_COMMAND} -E echo "@set UPDATED ${DOCS_UPDATED}" >> version.texi
+    OUTPUT avrstats.texi
+    DEPENDS avrdude_binaries
+    COMMAND echo -n "@set NUMPARTS " >> avrstats.texi
+    COMMAND $<TARGET_FILE:avrdude> -C ${AVRDUDE_CONF} -p \? 2>&1 | grep = | wc -l >> avrstats.texi
+    COMMAND echo -n "@set NUMPROGRAMMERS " >> avrstats.texi
+    COMMAND $<TARGET_FILE:avrdude> -C ${AVRDUDE_CONF} -c \? 2>&1 | grep = | wc -l >> avrstats.texi
     VERBATIM
     )
 
@@ -111,36 +102,12 @@ add_custom_command(
     )
 
 add_custom_command(
-    OUTPUT avrdude.dvi
-    COMMAND ${MAKEINFO_EXECUTABLE}
-        --dvi
-        --Xopt=--quiet
-        --Xopt=--build-dir=dvi
-        -o avrdude.dvi
-        ${TEXINFOS}
-    DEPENDS ${TEXINFOS} ${GENERATED_TEXINFOS}
-    VERBATIM
-    )
-
-add_custom_command(
     OUTPUT avrdude.pdf
     COMMAND ${MAKEINFO_EXECUTABLE}
         --pdf
         --Xopt=--quiet
         --Xopt=--build-dir=pdf
         -o avrdude.pdf
-        ${TEXINFOS}
-    DEPENDS ${TEXINFOS} ${GENERATED_TEXINFOS}
-    VERBATIM
-    )
-
-add_custom_command(
-    OUTPUT avrdude.ps
-    COMMAND ${MAKEINFO_EXECUTABLE}
-        --ps
-        --Xopt=--quiet
-        --Xopt=--build-dir=ps
-        -o avrdude.ps
         ${TEXINFOS}
     DEPENDS ${TEXINFOS} ${GENERATED_TEXINFOS}
     VERBATIM
@@ -163,9 +130,7 @@ add_custom_command(
 # =====================================
 
 add_custom_target(info ALL DEPENDS avrdude.info)
-add_custom_target(dvi ALL DEPENDS avrdude.dvi)
 add_custom_target(pdf ALL DEPENDS avrdude.pdf)
-add_custom_target(ps ALL DEPENDS avrdude.ps)
 add_custom_target(html ALL DEPENDS avrdude-html/avrdude.html)
 
 # =====================================
@@ -173,7 +138,5 @@ add_custom_target(html ALL DEPENDS avrdude-html/avrdude.html)
 # =====================================
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/avrdude.info" DESTINATION ${CMAKE_INSTALL_INFODIR})
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/avrdude.dvi" DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/avrdude.pdf" DESTINATION ${CMAKE_INSTALL_DOCDIR})
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/avrdude.ps" DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/avrdude-html" DESTINATION ${CMAKE_INSTALL_DOCDIR})
