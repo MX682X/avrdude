@@ -34,20 +34,65 @@
 #include "ch341a.h"
 #include "usbdevs.h"
 
-#if defined(HAVE_USB_H)
-#include <usb.h>                // Linux/Mac
-#elif defined(HAVE_LUSB0_USB_H)
-#include <lusb0_usb.h>          // Windows
-#endif
+#if defined(HAVE_LIBUSB_1_0)
+#define USE_LIBUSB_1_0
 
+#if defined(HAVE_LIBUSB_1_0_LIBUSB_H)
+#include <libusb-1.0/libusb.h>
+#else
+#include <libusb.h>
+#endif
 
 #include <sys/time.h>
 
-#if defined(HAVE_USB_H) || defined(HAVE_LUSB0_USB_H)
+#ifdef USE_LIBUSB_1_0
+static int libusb_to_errno(int result) {
+  switch(result) {
+  case LIBUSB_SUCCESS:
+    return 0;
+  case LIBUSB_ERROR_IO:
+    return EIO;
+  case LIBUSB_ERROR_INVALID_PARAM:
+    return EINVAL;
+  case LIBUSB_ERROR_ACCESS:
+    return EACCES;
+  case LIBUSB_ERROR_NO_DEVICE:
+    return ENXIO;
+  case LIBUSB_ERROR_NOT_FOUND:
+    return ENOENT;
+  case LIBUSB_ERROR_BUSY:
+    return EBUSY;
+
+#ifdef ETIMEDOUT
+  case LIBUSB_ERROR_TIMEOUT:
+    return ETIMEDOUT;
+#endif
+
+#ifdef EOVERFLOW
+  case LIBUSB_ERROR_OVERFLOW:
+    return EOVERFLOW;
+#endif
+
+  case LIBUSB_ERROR_PIPE:
+    return EPIPE;
+  case LIBUSB_ERROR_INTERRUPTED:
+    return EINTR;
+  case LIBUSB_ERROR_NO_MEM:
+    return ENOMEM;
+  case LIBUSB_ERROR_NOT_SUPPORTED:
+    return ENOSYS;
+  default:
+    return ERANGE;
+  }
+}
+#endif
 
 // Private data for this programmer
 struct pdata {
+  libusb_device_handle *usbhandle;
   int sckfreq_hz;
+
+  libusb_context *ctx;
   int USB_init;                 // Used in ch341a_open()
 };
 
@@ -78,23 +123,25 @@ static unsigned char swap_byte(unsigned char byte) {
   return byte;
 }
 
-static int CH341USBTransferPart(const PROGRAMMER *pgm, char dir,
+static int CH341USBTransferPart(const PROGRAMMER *pgm, enum libusb_endpoint_direction dir,
   unsigned char *buff, unsigned int size) {
 
-  if (dir & 0x80) {
-    if (serial_recv(&pgm->fd, buff, size) < 0) {
-      pmsg_error("serial_recv() failed\n");
-    };
-  } else {
-    if (serial_send(&pgm->fd, buff, size) < 0) {
-      pmsg_error("serial_send() failed\n");
-    }
+  int ret, bytestransferred;
+
+  if(!my.usbhandle)
+    return 0;
+
+  if((ret = libusb_bulk_transfer(my.usbhandle, CH341A_USB_BULK_ENDPOINT | dir,
+        buff, size, &bytestransferred, CH341A_USB_TIMEOUT))) {
+
+    pmsg_error("libusb_bulk_transfer for IN_EP failed, return value %d (%s)\n", ret, libusb_error_name(ret));
+    return -1;
   }
 
-  return size;
+  return bytestransferred;
 }
 
-static bool CH341USBTransfer(const PROGRAMMER *pgm, char dir,
+static bool CH341USBTransfer(const PROGRAMMER *pgm, enum libusb_endpoint_direction dir,
   unsigned char *buff, unsigned int size) {
 
   int pos = 0, bytestransferred;
@@ -145,37 +192,69 @@ bool CH341ChipSelect(const PROGRAMMER *pgm, unsigned int cs, bool enable) {
   cmd[2] = CH341A_CMD_UIO_STM_DIR | 0x3F;
   cmd[3] = CH341A_CMD_UIO_STM_END;
 
-  return CH341USBTransferPart(pgm, 0x00, cmd, 4) > 0;
+  return CH341USBTransferPart(pgm, LIBUSB_ENDPOINT_OUT, cmd, 4) > 0;
 }
 
 static int ch341a_open(PROGRAMMER *pgm, const char *port) {
-  if(!pgm->cookie)              // Sanity
-    return -1;
-  pmsg_debug("%s(\"%s\")\n", __func__, port);
-  union pinfo pinfo;
-  LNODEID usbpid;
-  int rv = -1;
+  LNODEID usbpid = lfirst(pgm->usbpid);
+  int pid, vid, j, r;
+  int errorCode = USB_ERROR_NOTFOUND;
+  libusb_device_handle *handle = NULL;
 
-  serdev = &usb_serdev;
+  pmsg_trace("ch341a_open(\"%s\")\n", port);
 
-  pinfo.usbinfo.vid = CH341A_VID;
-  pinfo.usbinfo.pid = CH341A_PID;
-  pgm->fd.usb.max_xfer = CH341A_PACKET_LENGTH;
-  pgm->fd.usb.rep = 0x82; // IN
-  pgm->fd.usb.wep = 0x02; // OUT
-  pgm->port = "usb";
-
-  rv = serial_open(port, pinfo, &pgm->fd);
-
-  if(serdev && serdev->usbsn) {
-    pgm->usbsn = serdev->usbsn;
+  if(!my.USB_init) {
+    my.USB_init = 1;
+    libusb_init(&my.ctx);
   }
 
-  return rv;
+  if(usbpid) {
+    pid = *(int *) (ldata(usbpid));
+    if(lnext(usbpid))
+      pmsg_warning("using PID 0x%04x, ignoring remaining PIDs in list\n", pid);
+  } else {
+    pid = CH341A_PID;
+  }
+  vid = pgm->usbvid? pgm->usbvid: CH341A_VID;
+
+  libusb_device **dev_list;
+  int dev_list_len = libusb_get_device_list(my.ctx, &dev_list);
+
+  for(j = 0; j < dev_list_len; ++j) {
+    libusb_device *dev = dev_list[j];
+    struct libusb_device_descriptor descriptor;
+
+    libusb_get_device_descriptor(dev, &descriptor);
+    if(descriptor.idVendor == vid && descriptor.idProduct == pid) {
+      r = libusb_open(dev, &handle);
+      if(!handle) {
+        errorCode = USB_ERROR_ACCESS;
+        pmsg_warning("cannot open USB device: %s\n", strerror(libusb_to_errno(r)));
+        continue;
+      }
+    }
+  }
+  libusb_free_device_list(dev_list, 1);
+  if(handle != NULL) {
+    errorCode = 0;
+    my.usbhandle = handle;
+  }
+
+  if(errorCode != 0) {
+    pmsg_error("could not find USB device with vid=0x%x pid=0x%x\n", vid, pid);
+    return -1;
+  }
+  if((r = libusb_claim_interface(my.usbhandle, 0))) {
+    pmsg_error("libusb_claim_interface failed, return value %d (%s)\n", r, libusb_error_name(r));
+    libusb_close(my.usbhandle);
+    libusb_exit(my.ctx);
+    return -1;
+  }
+  return 0;
 }
 
 static void ch341a_close(PROGRAMMER *pgm) {
-  pmsg_debug("%s()\n", __func__);
+  pmsg_trace("ch341a_close()\n");
 
   int cs = intlog2(pgm->pin[PIN_AVR_RESET].mask[0]);
 
@@ -184,7 +263,11 @@ static void ch341a_close(PROGRAMMER *pgm) {
 
   CH341ChipSelect(pgm, cs, false);
 
-  serial_close(&pgm->fd);
+  if(my.usbhandle != NULL) {
+    libusb_release_interface(my.usbhandle, 0);
+    libusb_close(my.usbhandle);
+  }
+  libusb_exit(my.ctx);
 }
 
 static int ch341a_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
@@ -222,12 +305,12 @@ static int ch341a_spi(const PROGRAMMER *pgm, const unsigned char *in, unsigned c
   for(int i = 0; i < size; i++)
     pkt[i + 1] = swap_byte(in[i]);
 
-  if(!CH341USBTransfer(pgm, 0x00, pkt, size + 1)) {
+  if(!CH341USBTransfer(pgm, LIBUSB_ENDPOINT_OUT, pkt, size + 1)) {
     pmsg_error("failed to transfer data to CH341\n");
     return -1;
   }
 
-  if(!CH341USBTransfer(pgm, 0x80, pkt, size)) {
+  if(!CH341USBTransfer(pgm, LIBUSB_ENDPOINT_IN, pkt, size)) {
     pmsg_error("failed to transfer data from CH341\n");
     return -1;
   }
