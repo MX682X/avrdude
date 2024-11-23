@@ -3097,7 +3097,7 @@ programmer # pickit5_jtag
     id                     = "pickit5_jtag";
     desc                   = "MPLAB(R) PICkit 5, PICkit 4 and SNAP (PIC) in JTAG Mode";
     type                   = "pickit5_jtag";
-    prog_modes             = PM_JTAG;
+    prog_modes             = PM_JTAG | PM_XMEGAJTAG;
     extra_features         = HAS_VTARG_READ;
     connection_type        = usb;
     baudrate               = 200000;   # JTAG default clock

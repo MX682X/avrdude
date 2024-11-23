@@ -146,12 +146,11 @@ static int pickit5_updi_write_cs_reg(const PROGRAMMER *pgm, unsigned int addr, u
 static int pickit5_updi_read_cs_reg(const PROGRAMMER *pgm, unsigned int addr, unsigned char *value);
 
 // ISP-specific
-static int pickit5_isp_init(const PROGRAMMER *pgm, const AVRPART *p);
+static int pickit5_isp_write_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char value);
 static int pickit5_isp_read_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char *value);
-static int pickit5_isp_write_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char *value);
 
 // debugWire-specific
-static int pickit5_dw_write_fuse(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, unsigned char *value);
+static int pickit5_dw_write_fuse(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, unsigned char value);
 static int pickit5_dw_read_fuse(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, unsigned char *value);
 static void pickit5_dw_switch_to_isp(const PROGRAMMER *pgm, const AVRPART *p);
 static void pickit5_isp_switch_to_dw(const PROGRAMMER *pgm, const AVRPART *p);
@@ -161,6 +160,10 @@ static int pickit5_tpi_read(const PROGRAMMER *pgm, const AVRPART *p,
   const AVRMEM *mem, unsigned long addr, int len, unsigned char *value);
 static int pickit5_tpi_write(const PROGRAMMER *pgm, const AVRPART *p,
   const AVRMEM *mem, unsigned long addr, int len, unsigned char *value);
+
+// JTAG-Specific
+static int pickit5_jtag_write_fuse(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, unsigned char value);
+static int pickit5_jtag_read_fuse(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, unsigned char *value);
 
 
 // Extra functions
@@ -304,7 +307,7 @@ static int pickit5_send_script(const PROGRAMMER *pgm, unsigned int script_type,
   unsigned int header_len = 16 + 8;     // Header info + script header
   unsigned int preamble_len = header_len + param_len;
   unsigned int message_len = preamble_len + script_len;
-  pmsg_debug("%s(%u, %u, %u, %u)\n", __func__, script_len, param_len, payload_len, preamble_len);
+  pmsg_debug("%s(scr_len: %u, param_len: %u, payload_len: %u)\n", __func__, script_len, param_len, payload_len);
 
   if(message_len >= 2048){       // Required memory will exceed buffer size, abort
     pmsg_error("Requested message size (%u) too large!", message_len);
@@ -590,32 +593,6 @@ static int pickit5_updi_init(const PROGRAMMER *pgm, const AVRPART *p, double v_t
   return 1;
 }
 
-static int pickit5_isp_init(const PROGRAMMER *pgm, const AVRPART *p) {
-  double bitclock = pgm->bitclock;
-  unsigned int baud = pgm->baudrate;
-
-  if(pickit5_program_enable(pgm, p) < 0)
-    return -1;
-
-  if(baud == 125000) {          // If baud unchanged
-    if(bitclock > 0.0) {
-      baud = (unsigned int) (1.0 / pgm->bitclock); // Bitclock in us
-    }
-  } else {
-    if(bitclock > 0.0) {
-      pmsg_error("both -b baudrate and -B bitclock given; please use only one, aborting\n");
-      return -1;
-    }
-  }
-
-  if(pickit5_read_dev_id(pgm, p) < 0) {
-    pmsg_error("failed to obtain device ID\n");
-    return -1;
-  }
-  pickit5_set_sck_period(pgm, 1.0 / baud);
-  return 1;
-}
-
 
 static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
   pmsg_debug("%s()\n", __func__);
@@ -629,29 +606,24 @@ static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
 
   int rc = -1;
 
-  switch(pgm->prog_modes) {
-    case PM_debugWIRE:
-      rc = get_pickit_dw_script(&(my.scripts), p->desc);
-      break;
-    case PM_ISP:
-      rc = get_pickit_isp_script(&(my.scripts), p->desc);
-      break;
-    case PM_JTAG:
-      rc = get_pickit_jtag_script(&(my.scripts), p->desc);
-      break;
-    case PM_UPDI:
-      rc = get_pickit_updi_script(&(my.scripts), p->desc);
-      break;
-    case PM_TPI:
-      rc = get_pickit_tpi_script(&(my.scripts), p->desc);
-      break;
-    case PM_PDI:
-      rc = get_pickit_pdi_script(&(my.scripts), p->desc);
-      break;
+  if(both_debugwire(pgm, p)) {
+    rc = get_pickit_dw_script(&(my.scripts), p->desc);
+  } else if(both_isp(pgm, p)) {
+    rc = get_pickit_isp_script(&(my.scripts), p->desc);
+  } else if(both_jtag(pgm, p) || both_xmegajtag(pgm, p)) {
+    rc = get_pickit_jtag_script(&(my.scripts), p->desc);
+  } else if(both_updi(pgm, p)) {
+    rc = get_pickit_updi_script(&(my.scripts), p->desc);
+  } else if(both_tpi(pgm, p)) {
+    rc = get_pickit_tpi_script(&(my.scripts), p->desc);
+  } else if(both_pdi(pgm, p)) {
+    rc = get_pickit_pdi_script(&(my.scripts), p->desc);
   }
 
-  if(rc == -1)
+  if(rc == -1) {
+    pmsg_error("no matching prog_mode found, aborting\n");
     return -1;
+  }
   if(rc == -2) {
     pmsg_error("failed to match scripts to %s, aborting\n", p->desc);
     return -1;
@@ -682,6 +654,12 @@ static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
       pmsg_warning("no external voltage detected but continuing anyway\n");
     } else if(my.power_source == POWER_SOURCE_INT) {
       pmsg_notice("no extenal Voltage detected; trying to supply from PICkit\n");
+        if(both_xmegajtag(pgm, p) || both_pdi(pgm, p)) {
+          if(my.target_voltage > 3.6) {
+            pmsg_error("xmega part selected but requested voltage is over 3.6V, aborting.");
+            return -1;
+          }
+        }
 
       if(pickit5_set_vtarget(pgm, my.target_voltage) < 0)
         return -1;              // Set requested voltage
@@ -705,12 +683,35 @@ static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
 
   my.pk_op_mode = PK_OP_READY;
   my.dW_switched_isp = 0;
-  // Target is powered, set the UPDI baudrate; adjust UPDICLKSEL if possible and neccessary
 
   if(is_updi(pgm) && (pickit5_updi_init(pgm, p, v_target) < 0)) {
-    return -1;
-  } else if((pickit5_isp_init(pgm, p) < 0)) { // Ended up being used for ISP, dW and TPI
-    return -1;
+    return -1;  // UPDI got it's own init as it is well enough documented to select the
+  } else {      //  CLKDIV based on the voltage and requested baud
+    double bitclock = pgm->bitclock;
+    unsigned int baud = pgm->baudrate;
+
+    if(baud == 125000) {          // If baud unchanged
+      if(bitclock > 0.0) {
+        baud = (unsigned int) (1.0 / pgm->bitclock); // Bitclock in us
+      }
+    } else {
+      if(bitclock > 0.0) {
+        pmsg_error("both -b baudrate and -B bitclock given; please use only one, aborting\n");
+        return -1;
+      }
+    }
+
+    // JTAG __requires__ setting the speed before program enable
+    pickit5_set_sck_period(pgm, 1.0 / baud);
+
+    if(pickit5_program_enable(pgm, p) < 0) {
+      pmsg_error("Failed to enable programming mode\n");
+      return -1;
+    }
+    if(pickit5_read_dev_id(pgm, p) < 0) {
+      pmsg_error("failed to obtain device ID\n");
+      return -1;
+    }
   }
 
   pickit5_program_enable(pgm, p);
@@ -806,12 +807,13 @@ static int pickit5_set_sck_period(const PROGRAMMER *pgm, double sckperiod) {
   unsigned char buf[4];
   if (set_speed_len > 0) {  // debugWire is fun . . .
     pickit5_uint32_to_array(buf, frq);
-    if(pickit5_send_script(pgm, SCR_CMD, set_speed, set_speed_len, buf, 4, 0) < 0)
-      return -1;
-    if(pickit5_read_response(pgm) < 0)
-      return -1;
+    if(pickit5_send_script(pgm, SCR_CMD, set_speed, set_speed_len, buf, 4, 0) >= 0) {
+      if(pickit5_read_response(pgm) >= 0)
+      return 0;
+    }
   }
-  return 0;
+  pmsg_error("Failed to set speed.\n");
+  return -1;
 }
 
 static int pickit5_write_byte(const PROGRAMMER *pgm, const AVRPART *p,
@@ -819,9 +821,11 @@ static int pickit5_write_byte(const PROGRAMMER *pgm, const AVRPART *p,
   int rc = 0;
   if(mem_is_in_fuses(mem)) {
     if(is_isp(pgm)){
-      rc = pickit5_isp_write_fuse(pgm, mem, &value);
+      rc = pickit5_isp_write_fuse(pgm, mem, value);
     } else if(is_debugwire(pgm)){
-      rc = pickit5_dw_write_fuse(pgm, p, mem, &value);
+      rc = pickit5_dw_write_fuse(pgm, p, mem, value);
+    } else if(both_jtag(pgm, p)){
+      rc = pickit5_jtag_write_fuse(pgm, p, mem, value);
     }
   }
   if (rc == 0) {
@@ -841,6 +845,8 @@ static int pickit5_read_byte(const PROGRAMMER *pgm, const AVRPART *p,
       rc = pickit5_isp_read_fuse(pgm, mem, value);
     } else if(is_debugwire(pgm)){
       rc = pickit5_dw_read_fuse(pgm, p, mem, value);
+    } else if(both_jtag(pgm, p)){
+      rc = pickit5_jtag_read_fuse(pgm, p, mem, value);
     }
   }
   if(rc == 0) {
@@ -960,7 +966,7 @@ static int pickit5_updi_read_byte(const PROGRAMMER *pgm, const AVRPART *p,
 // Return numbers of byte written
 static int pickit5_write_array(const PROGRAMMER *pgm, const AVRPART *p,
   const AVRMEM *mem, unsigned long addr, int len, unsigned char *value) {
-  pmsg_debug("%s(%s, 0x%04x, %i)", __func__, mem->desc, (unsigned int) addr, len);
+  pmsg_debug("%s(%s, addr: 0x%04x, offset: %i, len: %i)", __func__, mem->desc, (unsigned int) addr, mem->offset, len);
 
   if(len > mem->size || mem->size < 1) {
     pmsg_error("cannot write to %s %s owing to its size %d\n", p->desc, mem->desc, mem->size);
@@ -1045,7 +1051,8 @@ static int pickit5_write_array(const PROGRAMMER *pgm, const AVRPART *p,
 // Return numbers of byte read
 static int pickit5_read_array(const PROGRAMMER *pgm, const AVRPART *p,
   const AVRMEM *mem, unsigned long addr, int len, unsigned char *value) {
-  pmsg_debug("%s(%s, 0x%04x, %i)", __func__, mem->desc, (unsigned int) addr, len);
+  pmsg_debug("%s(%s, addr: 0x%04x, offset: %i, len: %i)", __func__, mem->desc, (unsigned int) addr, mem->offset, len);
+
 
   if(len > mem->size || mem->size < 1) {
     pmsg_error("cannot read from %s %s owing to its size %d\n", p->desc, mem->desc, mem->size);
@@ -1288,7 +1295,46 @@ static int pickit5_updi_read_cs_reg(const PROGRAMMER *pgm, unsigned int addr, un
   return 0;
 }
 
-static int pickit5_isp_write_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char *value) {
+
+static void pickit5_dw_switch_to_isp(const PROGRAMMER *pgm, const AVRPART *p) {
+  pmsg_debug("%s(%u)", __func__, my.dW_switched_isp);
+  if(my.dW_switched_isp == 0) {
+    if(pickit5_send_script_cmd(pgm, my.scripts.switchtoISP, my.scripts.switchtoISP_len, NULL, 0) >= 0) {
+      my.dW_switched_isp = 1;
+      pickit5_program_disable(pgm, p);
+      if(get_pickit_isp_script(&(my.scripts), p->desc) < 0) {
+        pmsg_error("Failed switching scripts, aborting.\n");
+        return;
+      }
+      pickit5_program_enable(pgm, p);
+    }
+  }
+}
+
+static void pickit5_isp_switch_to_dw(const PROGRAMMER *pgm, const AVRPART *p) {
+  if(my.dW_switched_isp) {
+    // dW_switched_isp is set when accessing fuses where dW has to be switched to ISP
+    // we have to power cycle to switch back to dW so that the Scripts work
+    // For now, only support power-cycling through PICkit
+    if(my.power_source == POWER_SOURCE_INT) {
+      pickit5_program_disable(pgm, p);
+      pickit5_set_vtarget(pgm, 0.0);
+      if(get_pickit_dw_script(&(my.scripts), p->desc) < 0) {
+        pmsg_error("Failed switching scripts, aborting.\n");
+        return;
+      }
+      pickit5_set_vtarget(pgm, my.target_voltage);
+      pickit5_program_enable(pgm, p);
+      my.dW_switched_isp = 0;
+    } else {
+      pmsg_error("Pickit 5 switched the part to ISP mode when writing fuses.");
+      pmsg_error("To continue, the part has to be power cycled and the operation restarted.");
+    }
+  }
+}
+
+
+static int pickit5_isp_write_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsigned char value) {
   unsigned char write_fuse_isp [] = {
     0x90, 0x00, 0x32, 0x00, 0x00, 0x00, // load 0x32 to r00
     0x1E, 0x37, 0x00,                   // Enable Programming?
@@ -1299,7 +1345,7 @@ static int pickit5_isp_write_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsi
   unsigned int cmd;
   avr_set_bits(mem->op[AVR_OP_WRITE], (unsigned char*)&cmd);
   avr_set_addr(mem->op[AVR_OP_WRITE], (unsigned char*)&cmd, mem_fuse_offset(mem));
-  avr_set_input(mem->op[AVR_OP_WRITE], (unsigned char*)&cmd, *value);
+  avr_set_input(mem->op[AVR_OP_WRITE], (unsigned char*)&cmd, value);
   cmd = __builtin_bswap32(cmd);         // Swap bitorder
   pickit5_uint32_to_array(&write_fuse_isp[11], cmd);  // fill programming command
 
@@ -1344,7 +1390,7 @@ static int pickit5_isp_read_fuse(const PROGRAMMER *pgm, const AVRMEM *mem, unsig
 // debugWire cannot write nor read fuses, have to change to ISP for that.
 // Luckily, there is a custom script doing fuse access on ISP anyway,
 // so no need to switch between script sets
-static int pickit5_dw_write_fuse(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, unsigned char *value) {
+static int pickit5_dw_write_fuse(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, unsigned char value) {
   pickit5_dw_switch_to_isp(pgm, p);
   return pickit5_isp_write_fuse(pgm, mem, value);
 }
@@ -1354,41 +1400,84 @@ static int pickit5_dw_read_fuse(const PROGRAMMER *pgm, const AVRPART *p, const A
   return pickit5_isp_read_fuse(pgm, mem, value);
 }
 
-static void pickit5_dw_switch_to_isp(const PROGRAMMER *pgm, const AVRPART *p) {
-  pmsg_debug("%s(%u)", __func__, my.dW_switched_isp);
-  if(my.dW_switched_isp == 0) {
-    if(pickit5_send_script_cmd(pgm, my.scripts.switchtoISP, my.scripts.switchtoISP_len, NULL, 0) >= 0) {
-      my.dW_switched_isp = 1;
-      pickit5_program_disable(pgm, p);
-      if(get_pickit_isp_script(&(my.scripts), p->desc) < 0) {
-        pmsg_error("Failed switching scripts, aborting.\n");
-        return;
-      }
-      pickit5_program_enable(pgm, p);
-    }
+
+// gave JTAG also a custom script to make integration into avrdude
+// easier. Also encodes all data in script itself instead of using paramters
+static int pickit5_jtag_write_fuse(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, unsigned char value) {
+  unsigned char write_fuse_jtag [] = {
+    0x9b, 0x00, 0x33,                   // Parameter address to r04
+    0x9b, 0x0B, 0xFF,                   // Parameter value to r11
+    0x9b, 0x0a, 0x0f,                   // Set r10 to 0x0F
+    0x9b, 0x02, 0x05,                   // Set r02 to 0x05    (PROG_COMMANDS)
+    0x1e, 0x66, 0x02,                   // JTAG Write to Instruction Reg the value in r02
+    0x90, 0x02, 0x40, 0x23, 0x00, 0x00, // set r02 to 0x2340  (Enter Fuse Write)
+    0x1e, 0x67, 0x02, 0x0a,             // JTAG: Write to Data Reg the value in r02 with a length in r0A(16)
+    0x90, 0x03, 0x00, 0x13, 0x00, 0x00, // set r03 to 0x1300  (Load Data Low Byte)
+    0x6e, 0x03, 0x0b,                   // r03 += r11         (Set low byte)
+    0x1e, 0x67, 0x03, 0x0a,             // JTAG: Write to Data Reg the value in r03 with a length in r0A(16)
+
+    0x60, 0x01, 0x00,                   // Copy r00 to r01    (Write fuse command)
+    0x68, 0x01, 0x08,                   // Left Shift r01 by 8
+    0x69, 0x00, 0x02, 0x00, 0x00, 0x00, // r00 -= 2
+    0x68, 0x00, 0x08,                   // Left Shift r00 by 8
+
+    0x1e, 0x67, 0x01, 0x0a,             // JTAG: Write to D../build_linux/src/avrdude -qq -c pickit5_jtag -xvtarg=4.5 -p m32u4 -Ueeprom:w:0x55:m -Ueeprom:w:0xaa:mata Reg the value in r01 with a length in r0A(16)
+    0x1e, 0x67, 0x00, 0x0a,             // JTAG: Write to Data Reg the value in r00 with a length in r0A(16)
+    0x1e, 0x67, 0x01, 0x0a,             // JTAG: Write to Data Reg the value in r01 with a length in r0A(16)
+    0x1e, 0x67, 0x01, 0x0a,             // JTAG: Write to Data Reg the value in r01 with a length in r0A(16)
+    0xa2,                               // do
+    0x1e, 0x6b, 0x01, 0x0a,             // JTAG: Write/read Data Reg the value in r01 with a length in r0A(16)
+    0xa5, 0x00, 0x02, 0x00, 0x00,       // while ((temp_reg & 0x200) != 0x200)
+    0x00, 0x02, 0x00, 0x00, 0x0a, 0x00, //
+  };
+  unsigned int write_fuse_isp_len = sizeof(write_fuse_jtag);
+  if(mem_is_hfuse(mem)) {
+    write_fuse_jtag[2] = 0x3B;
+  } else if (mem_is_efuse(mem)) {
+    write_fuse_jtag[2] = 0x37;
   }
+  write_fuse_jtag[5] = value;
+  if(pickit5_send_script_cmd(pgm, write_fuse_jtag, write_fuse_isp_len, NULL, 0) < 0) {
+    pmsg_error("Write Fuse Script failed");
+    return -1;
+  }
+  return 1;
 }
 
-static void pickit5_isp_switch_to_dw(const PROGRAMMER *pgm, const AVRPART *p) {
-  if(my.dW_switched_isp) {
-    // dW_switched_isp is set when accessing fuses where dW has to be switched to ISP
-    // we have to power cycle to switch back to dW so that the Scripts work
-    // For now, only support power-cycling through PICkit
-    if(my.power_source == POWER_SOURCE_INT) {
-      pickit5_program_disable(pgm, p);
-      pickit5_set_vtarget(pgm, 0.0);
-      if(get_pickit_dw_script(&(my.scripts), p->desc) < 0) {
-        pmsg_error("Failed switching scripts, aborting.\n");
-        return;
-      }
-      pickit5_set_vtarget(pgm, my.target_voltage);
-      pickit5_program_enable(pgm, p);
-      my.dW_switched_isp = 0;
-    } else {
-      pmsg_error("Pickit 5 switched the part to ISP mode when writing fuses.");
-      pmsg_error("To continue, the part has to be power cycled and the operation restarted.");
-    }
+static int pickit5_jtag_read_fuse(const PROGRAMMER *pgm, const AVRPART *p, const AVRMEM *mem, unsigned char *value) {
+  unsigned char read_fuse_jtag [] = {
+    0x9b, 0x06, 0x32,                     // load lfuse address to r06 (replaced fo hfuse/efuse)
+    0x9b, 0x07, 0x0f,                     // set r07 to 0x07
+    0x9b, 0x09, 0x05,                     // set r09 to 0x05 (PROG COMMANDS)
+    0x1e, 0x66, 0x09,                     // Write JTAG Instruction in r09
+    0x90, 0x09, 0x04, 0x23, 0x00, 0x00,   // set r09 to 0x2304 (Enter Fuse Bit Read)
+    0x1e, 0x67, 0x09, 0x07,               // Write JTAG instruction in r09 with length in r07 (7 bits)
+    0x60, 0x09, 0x06,                     // copy r06 to r09 (0x32)
+    0x68, 0x09, 0x08,                     // left-shift r09 by 8 
+    0x1e, 0x67, 0x09, 0x07,               // Write JTAG instruction in r09 with length in r07 (7 bits)
+    0x60, 0x09, 0x06,                     // copy r06 to r09
+    0x6e, 0x09, 0x02,                     // r09 += 2 (set LSB or so (writing only 7 bits))
+    0x68, 0x09, 0x08,                     // left-shift r09 by 8
+    0x1E, 0x6B, 0x09, 0x07,               // Write JTAG instruction in r09 with length in r07 (7 bits) and shift data in
+    0x9F,                                 // Send temp-reg to return status
+  };
+  unsigned int read_fuse_jtag_len = sizeof(read_fuse_jtag);
+  if(mem_is_hfuse(mem)) {
+    read_fuse_jtag[2] = 0x3E;
+  } else if (mem_is_efuse(mem)) {
+    read_fuse_jtag[2] = 0x3A;
   }
+
+  if(pickit5_send_script_cmd(pgm, read_fuse_jtag, read_fuse_jtag_len, NULL, 0) < 0) {
+    pmsg_error("Read Fuse Script failed");
+    return -1;
+  }
+  if (0x01 != my.rxBuf[20]) { // length
+    return -1;
+  }
+  *value = my.rxBuf[24];      // return value
+  return 1;
+
 }
 
 
@@ -1542,9 +1631,6 @@ static int pickit5_get_fw_info(const PROGRAMMER *pgm) {
 }
 
 static int pickit5_set_vtarget(const PROGRAMMER *pgm, double v) {
-  if(my.pgm_type >= PGM_TYPE_SNAP)  // SNAP can't supply power, ignore
-    return 0;
-
   unsigned char set_vtarget[] = {
     0x40,
     0x00, 0x00, 0x00, 0x00,     // Vdd
@@ -1558,6 +1644,10 @@ static int pickit5_set_vtarget(const PROGRAMMER *pgm, double v) {
   unsigned char disable_power[] = {
     0x44
   };
+
+  if(my.pgm_type >= PGM_TYPE_SNAP) { // SNAP can't supply power, ignore
+    return 0;
+  }
 
   if(v < 1.0) {                 // Anything below 1 V equals disabling Power
     pmsg_debug("%s(disable)\n", __func__);
