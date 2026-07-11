@@ -3,7 +3,7 @@ Approximate change log for AVRDUDE by version.
 (For detailed changes, see the version control system logs.)
 
 ----------------------------------------------------------------------
-Changes since version 8.1:
+Changes in version 8.2:
 
   * Major changes compared to the previous version:
 
@@ -76,7 +76,7 @@ Changes since version 8.1:
     - Disable Python binding under Windows 11 ARM64 in build.yml #2119
     - Improve Micronucleus info/warning/error messages #2110
     - Suppress gcc compiler warning #2116
-    - Inprove AVR-LA support #2118
+    - Improve AVR-LA support #2118
     - Update avrintel and avrdude.conf from device packs #2121
     - Introduce and future-proof d, r, w and q commands #2122
     - Fix Endian problems #2123
