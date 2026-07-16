@@ -985,28 +985,14 @@ static int pickit5_initialize(const PROGRAMMER *pgm, const AVRPART *p) {
     rc = get_pickit_jtag_script(&(my.scripts), p->desc);
     default_baud = 500000;
   } else if(both_updi(pgm, p)) {
-    unsigned int desc_len = strlen(p->desc);
-    if(desc_len > 5) {                        // make sure we can do a substraction without underflowing
-      char temp_desc[desc_len];
-      const char check [4] = { 'o', 't', 'u', 'a'};
-      unsigned int i = 0;
-      for(; i < 4; i++) {
-        if(p->desc[desc_len - i - 1] != check[i]) {
-          break;
-        }
-      }
-      if(i == 4) {                                  // "auto" has matched
-        memcpy(temp_desc, p->desc, desc_len - 4);   // copy name without "auto"
-        temp_desc[desc_len - 4] = 0x00;             // Null termination
-        rc = get_pickit_updi_script(&(my.scripts), temp_desc);
-        if(rc == -2) {
-          pmsg_debug("failed to match scripts to (shortened) %s\n", temp_desc);
-        }
-      } else {
-        rc = get_pickit_updi_script(&(my.scripts), p->desc);
-      }
-      default_baud = 200000;
+    char *p_desc = mmt_strdup(p->desc);
+    if(str_caseends(p_desc, "auto")) { // Remove trailing auto
+      p_desc[strlen(p_desc) - 4] = 0;
+      pmsg_debug("trying to match scripts to %s instead of %s\n", p_desc, p->desc);
     }
+    rc = get_pickit_updi_script(&my.scripts, p_desc);
+    mmt_free(p_desc);
+    default_baud = 200000;
   } else if(both_tpi(pgm, p)) {
     rc = get_pickit_tpi_script(&(my.scripts), p->desc);
     default_baud = 125000;
