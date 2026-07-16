@@ -87,8 +87,9 @@ c_func_list = [
 
 # List of MCUs Names that are not supported by avrdude
 mcu_to_exclude = [
-    "ATA5700M322", "ATA5702M322", "ATA5782", "ATA5787", "ATA5831", "ATA5835", "ATA8210", "ATA8510", 
-    "ATtiny416auto", "AVR16DV14", "AVR16DV20"
+    "ATA5700M322", "ATA5702M322", "ATA5782", "ATA5787", "ATA5831", "ATA5835", "ATA8210", "ATA8510", # RF Chips
+    "ATtiny416auto", # same as ATtiny416, so can be excluded as auto is removed before looking up the scripts
+    "AVR16DV14", "AVR16DV20"    # as far as I know, canceled chips
 ]
 
 
@@ -115,7 +116,7 @@ def get_common_header():
 
 /*
  * avrdude - A Downloader/Uploader for AVR device programmers
- * Copyright (C) 2024 MX682X
+ * Copyright (C) 2026 MX682X
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
